@@ -1,7 +1,10 @@
 project('op9-quick-settings', 'c', version: '1', license: 'GPL-3.0-or-later')
 
-# Plugins use phosh's own classes, so they need its headers: point
-# -Dphosh_src at an unpacked phosh source tree of the installed version.
+# Plugins use phosh's own classes, and phosh-dev installs only phosh-plugin.h:
+# PhoshQuickSetting lives in phosh's src/quick-setting.h, which no distro
+# installs. phosh_src is the unpacked phosh tarball for the installed version,
+# laid out as $srcdir/phosh-<version>. Meson rejects absolute include paths, so
+# resolve it relative to this build directory and pass the value accordingly.
 phosh_src = get_option('phosh_src')
 phosh_inc = include_directories(phosh_src / 'src')
 

@@ -31,7 +31,8 @@ Tested with both Phosh and Plasma Mobile.
 optional 360 Hz report rate, GPU (Vulkan 1.3), Wi-Fi 6, Bluetooth, USB 3 device and host mode, HDMI
 over USB-C, charging to stock's limits with a charging notification, speakers, earpiece, sensors,
 H.264 and VP9 video decoding in hardware, CPU and DDR scaling, buttons, alert slider, haptics,
-flashlight, Android apps through Waydroid, mobile data, VoLTE calls, SMS, MMS and GPS.
+flashlight, Android apps through Waydroid, mobile data, VoLTE calls, SMS and MMS through Chatty,
+and GPS.
 
 **Partial:** desktop mode (a display offers a full desktop, but docks and MST hubs do not work);
 wireless charging (about 2 W, tested only on another phone's reverse charging); cameras (all four

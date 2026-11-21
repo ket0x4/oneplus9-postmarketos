@@ -118,7 +118,7 @@ both phones, not a board name. The shared `sm8350-oneplus-common.dtsi` asks for 
 2. Build the image with the extra packages this port needs:
    ```sh
    pmbootstrap install --no-fde \
-       --add="rmtfs,tqftpserv,qrtr,qmicli,81voltd,mmsd-tng,hexagonrpc,pd-mapper,tuned,tuned-ppd,alsa-ucm-conf,alsa-utils,libcamera,libcamera-tools,pipewire-tools,wireplumber,mobile-config-firefox,firefox,gnome-calls,chatty,gnome-contacts,loupe,iotas,fastfetch,bluez,iwd,networkmanager-wifi,networkmanager-wwan,python3,py3-gobject3,py3-dbus,libqmi,libqrtr-glib"
+       --add="rmtfs,tqftpserv,qrtr,qmi-utils,81voltd,mmsd-tng,tuned,tuned-ppd,alsa-ucm-conf,alsa-utils,libcamera,libcamera-tools,pipewire-tools,wireplumber,mobile-config-firefox,firefox,calls,chatty,gnome-contacts,loupe,iotas,fastfetch,bluez,iwd,networkmanager-wifi,networkmanager-wwan,python3,py3-gobject3,py3-dbus,libqmi,libqrtr-glib"
    ```
 
 3. Copy the resulting rootfs image

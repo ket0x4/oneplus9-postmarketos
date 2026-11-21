@@ -41,19 +41,21 @@ source="meson.build
 	phosh-$_phoshver.tar.xz::https://sources.phosh.mobi/releases/phosh/phosh-$_phoshver.tar.xz"
 
 build() {
-	# Build the Phosh plugins only when its headers are present. On a Plasma-only
-	# image this is skipped and the package is just the QML settings plus the
-	# restore service, which is the whole point of shipping both in one package.
+	# The Phosh plugins need phosh's own classes: phosh-dev installs phosh-plugin.h
+	# but PhoshQuickSetting lives in phosh's src/, which no distro ships, so the
+	# tarball is unpacked next to the sources. Meson rejects absolute include
+	# paths, so phosh_src is relative to src/.
 	if [ -e /usr/lib/pkgconfig/phosh-plugins.pc ]; then
 		mkdir -p src
 		cp meson.build meson_options.txt op9-quick-setting.c quick-setting.plugin.in src/
 		meson setup "$srcdir/build" src \
 			--prefix=/usr \
 			--buildtype=plain \
-			-D phosh_src="$srcdir/phosh-$_phoshver"
+			-D phosh_src="../phosh-$_phoshver"
 		meson compile -C "$srcdir/build"
 	fi
 }
+
 
 package() {
 	if [ -d "$srcdir/build" ]; then

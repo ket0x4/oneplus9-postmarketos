@@ -17,8 +17,9 @@ options="!strip"
 # The same version replaces Alpine's package, so the tools and IPA helpers keep a
 # single source. Without this, apk would install both and the IPA signature check
 # would fail against the wrong library.
-replaces="libcamera"
-provides="libcamera-ipa=$pkgver-r$pkgrel"
+# Do NOT provides="libcamera-ipa": that claims the subpackage is already
+# satisfied, so apk never installs it and libcamera logs "No IPA found".
+replaces="libcamera libcamera-ipa"
 subpackages="$pkgname-ipa $pkgname-tools $pkgname-dev"
 source="libcamera-$pkgver.tar.gz::https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$pkgver/libcamera-v$pkgver.tar.gz
 	0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
@@ -60,8 +61,17 @@ package() {
 ipa() {
 	pkgdesc="libcamera IPA modules"
 	depends="$pkgname"
-	mkdir -p "$subpkgdir/usr/lib/libcamera"
-	mv "$pkgdir/usr/lib/libcamera/ipa"* "$subpkgdir/usr/lib/libcamera/" 2>/dev/null || true
+	# meson installs these as usr/lib/libcamera/ipa/*.so, so move the directory
+	# itself. A glob on "ipa*" under usr/lib/libcamera never matched, which left
+	# the modules in the main package and made libcamera log "No IPA found".
+	if [ -d "$pkgdir/usr/lib/libcamera/ipa" ]; then
+		install -d "$subpkgdir/usr/lib/libcamera"
+		mv "$pkgdir/usr/lib/libcamera/ipa" "$subpkgdir/usr/lib/libcamera/"
+	fi
+	# The soft ISP proxy stays with the library, not the IPA modules.
+	if [ -d "$pkgdir/usr/lib/libcamera" ]; then
+		rmdir "$pkgdir/usr/lib/libcamera" 2>/dev/null || true
+	fi
 }
 
 tools() {
