@@ -1,0 +1,46 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# hexagonrpcd with the registry-write patches this phone's sensors need. The
+# SLPI file server is what lets iio-sensor-proxy read the DSP's calibration, and
+# upstream can't write into its registry; the two patches here add that.
+# Not in Alpine or postmarketOS, so this is a forked package.
+pkgname=hexagonrpc
+pkgver=0.5.0
+_pkgver=0.5.0
+_commit=da7a3742ab8d5273a281b70ee11f16fb2cb6a690
+pkgrel=0
+pkgdesc="FastRPC server for Qualcomm DSPs, with OnePlus 9 registry-write patches"
+url="https://github.com/linux-msm/hexagonrpc"
+arch="aarch64"
+license="GPL-3.0-or-later"
+depends=""
+makedepends="meson samurai glib-dev"
+subpackages="$pkgname-doc"
+source="$pkgname-$_pkgver.tar.gz::https://github.com/linux-msm/hexagonrpc/archive/$_commit.tar.gz
+	0001-rpcd-apps_std-support-writing-files-in-mapped-direct.patch
+	0002-rpcd-listener-fetch-input-buffers-larger-than-256-by.patch
+	hexagonrpc.sysusers"
+builddir="$srcdir/hexagonrpc-$_commit"
+
+prepare() {
+	default_prepare
+}
+
+build() {
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build"
+	install -Dm644 "$srcdir/hexagonrpc.sysusers" \
+		"$pkgdir/usr/lib/sysusers.d/hexagonrpc.conf"
+}
+
+sha512sums="
+866ffde3110d3744cd6ea0dd4b965e640e293e21a77cd3767ba770515ed09dda11667d70f806d4fedad283d7e38671c2d455b6c612b7225a038930d3eac5bc2c  $pkgname-$_pkgver.tar.gz
+0b1fac77ca08dc6ca5322f199d1d13a29ff01784c3086b75f0cdcc42373c5666bfff847b4c3cd1458ce15f66fefe2c694c8ae99c9487cb432d37cbc9f551e5c4  0001-rpcd-apps_std-support-writing-files-in-mapped-direct.patch
+821ab220fd1dae1ab9265e70dadc057c92e12361d22d3f9b01952ef62f8988d3ece72fc81568838abd02bac86eb97aefa854ca2178268dd63c8b994437d1a3e7  0002-rpcd-listener-fetch-input-buffers-larger-than-256-by.patch
+b2730a0d06ccb05cca279881d54f879e85bdeb7e7c665325252c8f16e05bead2f470976740f88f5053db4077eabf0b09718fa8c517cf7f8560353d756d31ec3b  hexagonrpc.sysusers
+"

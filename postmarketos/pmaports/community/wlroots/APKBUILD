@@ -1,0 +1,43 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# wlroots 0.20 with the layer-shell patch this port needs: a 0-dimension
+# surface without an anchor is an error upstream, but Phosh's home bar creates
+# one, and wlroots aborts the client (Phosh then crashes).
+pkgname=wlroots0.20
+pkgver=0.20.2
+pkgrel=0
+pkgdesc="Modular Wayland compositor library, with the OnePlus 9 layer-shell fix"
+url="https://gitlab.freedesktop.org/wlroots/wlroots"
+arch="aarch64"
+license="MIT"
+depends="libdisplay-info libdrm libinput lcms2 libliftoff pixman seatd
+	wayland mesa-egl mesa-gl vulkan-loader libxcb libxkbcommon"
+makedepends="meson samurai wayland-dev wayland-protocols libinput-dev libdrm-dev
+	pixman-dev libxcb-dev libxkbcommon-dev libdisplay-info-dev lcms2-dev
+	seatd glslang-dev vulkan-headers mesa-dev"
+subpackages="$pkgname-dev"
+# Alpine ships no wlroots 0.20, so this does not replace anything.
+source="wlroots-$pkgver.tar.gz::https://gitlab.freedesktop.org/wlroots/wlroots/-/archive/$pkgver/wlroots-$pkgver.tar.gz
+	0001-Revert-layer-shell-error-on-0-dimension-without-anch.patch"
+builddir="$srcdir/wlroots-$pkgver"
+
+prepare() {
+	default_prepare
+}
+
+build() {
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build"
+	install -Dm644 "$builddir/LICENSE" \
+		"$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+sha512sums="
+e96523a2b215e7d1f36bbe5e7fa3e65d15cb87e2f0d9c304d3c2fdc81b0ac0c7202cd955635c01072b34e70f08c6c00fa2cde8c277bd73fcabdcb19f7b579a12  wlroots-$pkgver.tar.gz
+4ae9b801d3bbda0fe064fac34855b37c170785b185ae8e860dc6e6adb7f87a0e43d17d4a792d1bc506579e1dad07132529429084a62698d4715478393a641194  0001-Revert-layer-shell-error-on-0-dimension-without-anch.patch
+"

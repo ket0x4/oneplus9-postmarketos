@@ -1,0 +1,31 @@
+From 845d19b5e76c7ad777da87d71531e2082f81c26a Mon Sep 17 00:00:00 2001
+From: Nex <63727521+LuCiLuna@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:19:03 +0300
+Subject: [PATCH 150/167] HACK: soc: qcom: handle the OnePlus 9 in the bring-up splash
+ path
+
+op9-splash-autorefresh() returns early unless the machine is a 9 Pro, which
+also skips disabling the Gunyah watchdog. On the OnePlus 9 that watchdog
+resets the phone about ten seconds after handoff, so the gate has to accept
+oneplus,lemonade as well. The DSI INTF addresses it writes are SoC-level.
+---
+ drivers/soc/qcom/op9-splash-autorefresh.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/soc/qcom/op9-splash-autorefresh.c b/drivers/soc/qcom/op9-splash-autorefresh.c
+index c5582dda5..8c2ff9019 100644
+--- a/drivers/soc/qcom/op9-splash-autorefresh.c
++++ b/drivers/soc/qcom/op9-splash-autorefresh.c
+@@ -58,7 +58,8 @@ static int __init op9_splash_autorefresh(void)
+ {
+ 	int i;
+ 
+-	if (!of_machine_is_compatible("oneplus,lemonadep"))
++	if (!of_machine_is_compatible("oneplus,lemonadep") &&
++	    !of_machine_is_compatible("oneplus,lemonade"))
+ 		return 0;
+ 
+ 	/*
+-- 
+2.56.1
+

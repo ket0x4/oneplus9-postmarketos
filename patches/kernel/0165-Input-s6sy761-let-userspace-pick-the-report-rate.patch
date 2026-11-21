@@ -1,0 +1,158 @@
+From 901cb5585a99d626ce23a73ac075ed362889b9c5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?ibrahim=20y=C3=B6ndemli?= <ket0x4@pm.me>
+Date: Fri, 20 Nov 2026 12:39:30 +0300
+Subject: [PATCH 165/167] Input: s6sy761 - let userspace pick the report rate
+
+The S6SY792 on the OnePlus 9 runs at 120 Hz by default and switches to high
+report rate (game mode) through register 0x45 in the stock sec-s6sy792
+driver. Add a report_rate sysfs attribute (120, 240 or 360) matching the
+Synaptics S3908 driver and re-apply it after resume.
+---
+ drivers/input/touchscreen/s6sy761.c | 79 ++++++++++++++++++++++++++++-
+ 1 file changed, 77 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/input/touchscreen/s6sy761.c b/drivers/input/touchscreen/s6sy761.c
+index b77587f5e..5b3c71962 100644
+--- a/drivers/input/touchscreen/s6sy761.c
++++ b/drivers/input/touchscreen/s6sy761.c
+@@ -22,6 +22,7 @@
+ #define S6SY761_TOUCH_FUNCTION		0x30 /* R/W for get/set */
+ #define S6SY761_FIRMWARE_INTEGRITY	0x21
+ #define S6SY761_PANEL_INFO		0x23
++#define S6SY761_GAME_MODE		0x45
+ #define S6SY761_DEVICE_ID		0x52
+ #define S6SY761_BOOT_STATUS		0x55
+ #define S6SY761_READ_ONE_EVENT		0x60
+@@ -112,6 +113,8 @@ struct s6sy761_data {
+ 	u8 tx_channel;
+ 	const char *dev_name;
+ 	struct gpio_desc *reset_gpio;
++	unsigned int report_rate;
++	bool suspended;
+ };
+ 
+ /*
+@@ -276,6 +279,29 @@ static void s6sy761_input_close(struct input_dev *dev)
+ 		dev_err(&sdata->client->dev, "failed to turn off sensing\n");
+ }
+ 
++static int s6sy761_apply_report_rate(struct s6sy761_data *sdata)
++{
++	u8 val;
++
++	switch (sdata->report_rate) {
++	case 0:
++		return 0;
++	case 120:
++		val = 0x00;
++		break;
++	case 240:
++		val = 0x02;
++		break;
++	case 360:
++		val = 0x01;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return i2c_smbus_write_byte_data(sdata->client, S6SY761_GAME_MODE, val);
++}
++
+ static ssize_t s6sy761_sysfs_devid(struct device *dev,
+ 				struct device_attribute *attr, char *buf)
+ {
+@@ -286,8 +312,50 @@ static ssize_t s6sy761_sysfs_devid(struct device *dev,
+ 
+ static DEVICE_ATTR(devid, 0444, s6sy761_sysfs_devid, NULL);
+ 
++static ssize_t report_rate_show(struct device *dev,
++				struct device_attribute *attr, char *buf)
++{
++	struct s6sy761_data *sdata = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%u\n", sdata->report_rate);
++}
++
++static ssize_t report_rate_store(struct device *dev,
++				 struct device_attribute *attr,
++				 const char *buf, size_t count)
++{
++	struct s6sy761_data *sdata = dev_get_drvdata(dev);
++	unsigned int hz, old;
++	int ret;
++
++	ret = kstrtouint(buf, 10, &hz);
++	if (ret)
++		return ret;
++
++	if (hz != 120 && hz != 240 && hz != 360)
++		return -EINVAL;
++
++	guard(mutex)(&sdata->input->mutex);
++
++	old = sdata->report_rate;
++	sdata->report_rate = hz;
++
++	if (!sdata->suspended) {
++		ret = s6sy761_apply_report_rate(sdata);
++		if (ret) {
++			sdata->report_rate = old;
++			return ret;
++		}
++	}
++
++	return count;
++}
++
++static DEVICE_ATTR_RW(report_rate);
++
+ static struct attribute *s6sy761_sysfs_attrs[] = {
+ 	&dev_attr_devid.attr,
++	&dev_attr_report_rate.attr,
+ 	NULL
+ };
+ ATTRIBUTE_GROUPS(s6sy761_sysfs);
+@@ -348,7 +416,7 @@ static int s6sy761_power_on(struct s6sy761_data *sdata)
+ 	if (ret)
+ 		return ret;
+ 
+-	return 0;
++	return s6sy761_apply_report_rate(sdata);
+ }
+ 
+ static int s6sy761_hw_init(struct s6sy761_data *sdata,
+@@ -508,15 +576,21 @@ static int s6sy761_runtime_suspend(struct device *dev)
+ static int s6sy761_runtime_resume(struct device *dev)
+ {
+ 	struct s6sy761_data *sdata = dev_get_drvdata(dev);
++	int ret;
+ 
+-	return i2c_smbus_write_byte_data(sdata->client,
++	ret = i2c_smbus_write_byte_data(sdata->client,
+ 				S6SY761_APPLICATION_MODE, S6SY761_APP_NORMAL);
++	if (ret)
++		return ret;
++
++	return s6sy761_apply_report_rate(sdata);
+ }
+ 
+ static int s6sy761_suspend(struct device *dev)
+ {
+ 	struct s6sy761_data *sdata = dev_get_drvdata(dev);
+ 
++	sdata->suspended = true;
+ 	s6sy761_power_off(sdata);
+ 
+ 	return 0;
+@@ -531,6 +605,7 @@ static int s6sy761_resume(struct device *dev)
+ 	if (err)
+ 		return err;
+ 
++	sdata->suspended = false;
+ 	enable_irq(sdata->client->irq);
+ 
+ 	guard(mutex)(&sdata->input->mutex);
+-- 
+2.56.1
+

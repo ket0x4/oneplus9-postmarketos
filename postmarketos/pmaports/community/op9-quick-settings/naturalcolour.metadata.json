@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "KPackage/GenericQML",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "OnePlus 9 Linux"
+            }
+        ],
+        "Description": "Switch between sRGB (Natural) and the panel's wide gamut (Vivid)",
+        "Description[tr]": "sRGB (Doğal) ile panelin geniş renk gamı (Canlı) arasında değiştir",
+        "Icon": "applications-graphics-symbolic",
+        "Id": "org.op9.quicksetting.naturalcolour",
+        "License": "GPL-2.0-or-later",
+        "Name": "Natural colour",
+        "Name[tr]": "Doğal renk"
+    }
+}

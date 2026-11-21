@@ -1,0 +1,48 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# phoc with the layer-surface patch: rotating an output back before clients drew
+# the first rotation leaves GTK clients with nothing to redraw, so the layout
+# transaction waits out its 3 s timeout with the output shield up (a black
+# screen) and the late commits trip the pending_layer_configures assertion.
+pkgname=phoc
+pkgver=0.59.0
+pkgrel=0
+pkgdesc="Phone compositor for Phosh, with OnePlus 9 layout fixes"
+url="https://gitlab.gnome.org/World/Phosh/phoc"
+arch="aarch64"
+license="GPL-3.0-or-later"
+depends="glib gtk+3.0 wlroots0.20 libinput lcms2 libdisplay-info libdrm gmobile
+	gnome-desktop pixman pango cairo seatd wayland mesa"
+makedepends="meson samurai glib-dev wayland-dev wayland-protocols libinput-dev
+	libdrm-dev pixman-dev cairo-dev pango-dev gtk+3.0-dev gmobile-dev
+	libdisplay-info-dev lcms2-dev gnome-desktop-dev xcb-util-errors-dev
+	xcb-util-renderutil-dev xcb-util-wm-dev glslang-dev vulkan-headers
+	libxcb-dev py3-docutils"
+subpackages="$pkgname-doc"
+# Phosh and phoc are versioned together; replacing the Alpine package keeps one copy.
+replaces="phoc"
+source="phoc-$pkgver.tar.gz::https://gitlab.gnome.org/World/Phosh/phoc/-/archive/v$pkgver/phoc-v$pkgver.tar.gz
+	phoc-op9.patch"
+builddir="$srcdir/phoc-v$pkgver"
+
+prepare() {
+	default_prepare
+}
+
+build() {
+	# phoc builds its own vendored wlroots (subproject), so no system wlroots
+	# library is linked; the wlroots0.20 dependency is for the headers only.
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain \
+		-D man=true
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build" --skip-subprojects wlroots
+}
+
+sha512sums="
+e43486ee2ab93ac9770975b1dd58b98b8da35cfe038cf20b25692c80d4b0e92b098c61f5abbb41d72fa6169f139cf7b6362346495d3471a3ece267d795617cc1  phoc-$pkgver.tar.gz
+b3efa1dab55fee7d405db6fba3972c468377af9c82b93a42d61a596471019ab23311a4a5e5670ec3e580cc4b03b94d882e4ee4f82bfe6dc541685e42e78afd60  phoc-op9.patch
+"

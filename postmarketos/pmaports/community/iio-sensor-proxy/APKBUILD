@@ -1,0 +1,43 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# iio-sensor-proxy with the SSC availability patch: the SLPI's sensors are opened
+# on a nested main loop after the D-Bus name is already owned, so clients reading
+# the properties right away were told the phone has none. Broadcast availability
+# once it is known.
+pkgname=iio-sensor-proxy
+pkgver=3.9
+pkgrel=0
+pkgdesc="IIO accelerometer sensor to input device proxy, with OnePlus 9 SSC fix"
+url="https://gitlab.freedesktop.org/hadess/iio-sensor-proxy"
+arch="aarch64"
+license="GPL-3.0-only"
+depends="glib libgudev libssc polkit"
+makedepends="meson samurai glib-dev libgudev-dev"
+# Built against libssc for the Qualcomm SLPI sensors; postmarketOS ships the same
+# version, so this replaces it rather than installing alongside.
+replaces="iio-sensor-proxy"
+source="$pkgname-$pkgver.tar.gz::https://gitlab.freedesktop.org/hadess/iio-sensor-proxy/-/archive/$pkgver/iio-sensor-proxy-$pkgver.tar.gz
+	iio-sensor-proxy-op9.patch"
+builddir="$srcdir/iio-sensor-proxy-$pkgver"
+
+prepare() {
+	default_prepare
+}
+
+build() {
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain \
+		-D systemdsystemunitdir=/usr/lib/systemd/system \
+		-D udevrulesdir=/usr/lib/udev/rules.d \
+		-D sysconfdir=/etc
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build"
+}
+
+sha512sums="
+a89c842f8db2a1a36c1c7c990434bb57fd905224459170cba2ec56e79f1272acc4cac4221937704d5e9247f957d86fde716d25e2d1ccb80d88fa643b47edfda6  $pkgname-$pkgver.tar.gz
+37e42978182a3313c2c57dbf44797bc653efead19853c99a996d950c9666de4594e0150d7a4fe2e5c40c61be52dd9aee5ba35ddd081cbd0eed0f9c2d03916287  iio-sensor-proxy-op9.patch
+"

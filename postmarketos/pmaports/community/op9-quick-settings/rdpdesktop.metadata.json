@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "KPackage/GenericQML",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "OnePlus 9 Linux"
+            }
+        ],
+        "Description": "Start or stop headless KDE Plasma 6 Desktop over RDP (port 3389)",
+        "Description[tr]": "RDP (port 3389) üzerinden sanal KDE Plasma 6 Masaüstünü aç/kapat",
+        "Icon": "preferences-desktop-display-randr",
+        "Id": "org.op9.quicksetting.rdpdesktop",
+        "License": "GPL-2.0-or-later",
+        "Name": "RDP Desktop",
+        "Name[tr]": "RDP Masaüstü"
+    }
+}

@@ -1,0 +1,98 @@
+# Proves the patch series still applies to v7.3 and that the kernel, its
+# built-in device tree and the modules compile with kernel/op9.config, then
+# packages what a release ships: Image, modules, initramfs and the boot image
+# scripts. The phone's addresses are read from the modem at boot, so nothing
+# built here is specific to one phone. release.yml calls this on a tag.
+name: Kernel build
+
+on:
+  push:
+    branches: ['**']
+    paths: [patches/**, kernel/**, initramfs/**, scripts/**, .github/workflows/kernel.yml]
+  pull_request:
+    paths: [patches/**, kernel/**, initramfs/**, scripts/**, .github/workflows/kernel.yml]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: kernel-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - name: Install the cross toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross bc bison flex libssl-dev libelf-dev cpio kmod \
+            python3 bzip2 zstd
+
+      # Before the kernel, so a failure here shows in minutes. busybox and dmcreate are static
+      # aarch64 programs, so they need the cross libc as well as the compiler.
+      - name: Build the initramfs
+        run: |
+          mkdir -p work
+          initramfs/busybox.sh work/busybox
+          # The same timestamp kernel/build.sh derives from the pinned base commit
+          # (2026-10-18T23:14:58Z for Linux 7.3), so the initramfs is byte-identical
+          # between runs. If KERNEL_COMMIT in kernel/build.sh moves, update this too.
+          export SOURCE_DATE_EPOCH=1792365298
+          initramfs/build.sh work/busybox work/initramfs.gz
+
+      - name: Build the device trees, Image and modules
+        # kernel/build.sh fetches the pinned base commit and applies the series, so
+        # there is no separate clone step and no clock- or host-dependent output.
+        run: |
+          if ! JOBS=$(($(nproc) + 1)) kernel/build.sh work > build.log 2>&1; then
+            grep -E 'error:|Error [0-9]|Patch failed|does not apply' build.log | head -40
+            tail -40 build.log
+            exit 1
+          fi
+          grep -q '^CONFIG_DEBUG_INFO_NONE=y' work/build/.config ||
+            { echo '::error::built config still has debug info'; exit 1; }
+          echo "Base:  $(grep ^base_commit= work/build/build-manifest.txt)"
+          echo "Patch series: $(grep ^patch_series_sha256= work/build/build-manifest.txt)"
+          grep -E 'warning:' build.log | sort -u || true
+          ls -l work/build/arch/arm64/boot/Image work/build/op9-builtin.dtb work/build/op9-builtin-lemonade.dtb
+          # A debug kernel Image is hundreds of MB; the stripped one is tens.
+          size=$(stat -c%s work/build/arch/arm64/boot/Image)
+          [ "$size" -lt 134217728 ] ||
+            { echo "::error::Image is $size bytes, debug info was not stripped"; exit 1; }
+
+      - name: Package the release files
+        run: |
+          krel=$(cat work/build/include/config/kernel.release)
+          mkdir out
+          cp work/build/arch/arm64/boot/Image out/Image
+          # Deterministic tar: sorted entries and a fixed mtime, so the module
+          # archive hashes the same for the same modules.
+          epoch=$(sed -n 's/^source_date_epoch=//p' work/build/build-manifest.txt)
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+              --mtime="@${epoch:-0}" -C work/modroot -cf - lib |
+            zstd -T0 -19 -q -o "out/modules-$krel.tar.zst"
+          cp work/initramfs.gz scripts/mkboot.sh scripts/op9-boot-image.sh out/
+          echo "$krel" > out/KERNEL_RELEASE
+          cp work/build/build-manifest.txt out/
+          (cd out && sha256sum -- * > SHA256SUMS)
+          cat out/build-manifest.txt
+          ls -l out
+
+      - name: Keep the release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: op9-kernel
+          path: out
+          retention-days: 30
+
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14

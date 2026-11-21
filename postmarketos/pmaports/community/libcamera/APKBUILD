@@ -1,0 +1,85 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# libcamera with the software-ISP patches this port needs: a correctly centred
+# debayer for the scaled-down mantis, the OnePlus 9 sensor gain helpers (IMX689,
+# IMX766, IMX471, GC02M1B) and contrast-detect autofocus. Replaces Alpine's
+# libcamera so the -ipa subpackage comes from the same build.
+pkgname=libcamera
+pkgver=0.7.2
+pkgrel=0
+pkgdesc="Camera support library, with OnePlus 9 software-ISP patches"
+url="https://libcamera.org/"
+arch="aarch64"
+license="LGPL-2.1-or-later AND GPL-2.0-or-later AND BSD-2-Clause"
+depends=""
+makedepends="meson samurai libdrm-dev libjpeg-turbo-dev tiff-dev openssl-dev
+	py3-jinja2 py3-ply py3-yaml python3-dev libevent-dev"
+options="!strip"
+# The same version replaces Alpine's package, so the tools and IPA helpers keep a
+# single source. Without this, apk would install both and the IPA signature check
+# would fail against the wrong library.
+replaces="libcamera"
+provides="libcamera-ipa=$pkgver-r$pkgrel"
+subpackages="$pkgname-ipa $pkgname-tools $pkgname-dev"
+source="libcamera-$pkgver.tar.gz::https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$pkgver/libcamera-v$pkgver.tar.gz
+	0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
+	0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
+	0003-ipa-simple-add-contrast-detection-auto-focus.patch"
+builddir="$srcdir/libcamera-v$pkgver"
+
+prepare() {
+	default_prepare
+	# utils/gen-version.sh reads this when the tree has no git metadata
+	printf '%s\n' "$pkgver" > "$builddir/.tarball-version"
+}
+
+build() {
+	# Only what this phone uses, plus USB webcams. GCC warns inside libcamera's
+	# own headers, so werror stays off.
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain \
+		-D pipelines=simple,uvcvideo \
+		-D ipas=simple \
+		-D v4l2=enabled \
+		-D werror=false \
+		-D tracing=disabled \
+		-D test=false \
+		-D documentation=disabled \
+		-D gstreamer=disabled \
+		-D pycamera=disabled \
+		-D cam=enabled \
+		-D qcam=disabled \
+		-D lc-compliance=disabled
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build"
+}
+
+ipa() {
+	pkgdesc="libcamera IPA modules"
+	depends="$pkgname"
+	mkdir -p "$subpkgdir/usr/lib/libcamera"
+	mv "$pkgdir/usr/lib/libcamera/ipa"* "$subpkgdir/usr/lib/libcamera/" 2>/dev/null || true
+}
+
+tools() {
+	pkgdesc="libcamera command-line tools"
+	depends="$pkgname"
+	mkdir -p "$subpkgdir/usr/bin"
+	mv "$pkgdir"/usr/bin/* "$subpkgdir/usr/bin/" 2>/dev/null || true
+}
+
+dev() {
+	default_dev
+	mkdir -p "$subpkgdir/usr/include"
+	mv "$pkgdir/usr/include"/* "$subpkgdir/usr/include/" 2>/dev/null || true
+}
+
+sha512sums="
+b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb0837e3e381564c184c7b742124aef4267eea754c6083de353c1  libcamera-$pkgver.tar.gz
+a11b5891d5c90ca6a09fbf5e16618e286b500a2919c0a50ea440e7cd9221ca33e850882dd433223f12487f096b53274875721f52b18d19b7915c8fc77e0c8f8a  0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
+c107b554c223a5cbcb33e2d062001d3e1e19ac5390c5cf63f03b7918d6187711e5fdc9589ba9fdfbf8a42cbcb4c8faec6aa4d558b144a3f107d190a2d33e6541  0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
+dce8dc29ecab7b89977058821d4c03b368f0f5a80b910458c41fd1f60d92cc6fe2a38bd3781a5b046c1e9009bf6f6cccd13866620c8e3d8f175ab8e3a6514923  0003-ipa-simple-add-contrast-detection-auto-focus.patch
+"

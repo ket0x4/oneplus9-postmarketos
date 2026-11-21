@@ -1,0 +1,17 @@
+[Unit]
+Description=Create the USB network gadget if the initramfs found no controller
+# The initramfs only builds the gadget when a UDC exists when it runs; dwc3 can
+# probe later, and nothing else retries, which leaves the phone unreachable over
+# USB. Ordered after the modem services so a boot that gets this far is complete.
+After=local-fs.target sysinit.target
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/usb-gadget-ensure
+RemainAfterExit=yes
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

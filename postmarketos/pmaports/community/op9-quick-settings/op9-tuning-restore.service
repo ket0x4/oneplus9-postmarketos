@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-apply the OnePlus 9 quick settings' sysfs choices
+Documentation=https://github.com/LuCiLuna/oneplus9pro-arch
+# The udev rules that grant the `video` group write access to both knobs run
+# during coldplug, so the session must be up before this does anything useful.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/op9-tuning-restore
+
+[Install]
+WantedBy=graphical-session.target

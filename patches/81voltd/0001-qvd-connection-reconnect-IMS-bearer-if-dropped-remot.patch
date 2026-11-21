@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: op9-build <op9-build@localhost>
+Date: Fri, 20 Nov 2026 12:45:00 +0300
+Subject: [PATCH] qvd-connection: reconnect IMS bearer if dropped remotely
+
+When the modem switches RATs (e.g. 4G <-> 5G) or NetworkManager runs
+SimpleDisconnect before SimpleConnect for mobile data, ModemManager tears
+down the IMS bearer even though the modem's IMS stack never requested
+IMSD_STOP_CONNECTION (conn->requested is still TRUE). Automatically
+schedule a reconnect after 2 seconds when the bearer's address is lost
+while conn->requested is TRUE.
+---
+ qvd-connection.c | 25 +++++++++++++++++++++++--
+ 1 file changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/qvd-connection.c b/qvd-connection.c
+index 1e54463..6a17c98 100644
+--- a/qvd-connection.c
++++ b/qvd-connection.c
+@@ -20,6 +20,7 @@ struct _QVDConnection {
+ 	MMBearerIpFamily ip_type;
+ 	gchar *addr;
+ 	gboolean requested;
++	guint reconnect_id;
+ 
+ 	guint32 sub_id, conn_id;
+ 	guint8 local_id;
+@@ -57,6 +58,9 @@ static void qvd_connection_dispose(GObject *obj)
+ {
+ 	QVDConnection *conn = QVD_CONNECTION(obj);
+ 
++	if (conn->reconnect_id != 0)
++		g_source_remove(g_steal_handle_id(&conn->reconnect_id));
++
+ 	if (conn->addr != NULL)
+ 		g_free(g_steal_pointer(&conn->addr));
+ 
+@@ -94,6 +98,19 @@ void qvd_connection_get_handles(const QVDConnection *conn,
+ 		*local_id = conn->local_id;
+ }
+ 
++static void on_connect(GObject *obj, GAsyncResult *res, gpointer data);
++
++static gboolean reconnect_cb(gpointer data)
++{
++	QVDConnection *conn = QVD_CONNECTION(data);
++
++	conn->reconnect_id = 0;
++	if (conn->requested && conn->bearer != NULL && conn->addr == NULL)
++		mm_bearer_connect(conn->bearer, NULL, on_connect, g_object_ref(conn));
++
++	return G_SOURCE_REMOVE;
++}
++
+ static void try_notify_address(QVDConnection *conn,
+ 			       GVariant *changed,
+ 			       MMBearerIpFamily ip_type,
+@@ -109,8 +124,14 @@ static void try_notify_address(QVDConnection *conn,
+ 	g_variant_lookup(ip_conf, "address", "s", &addr);
+ 
+ 	if (g_strcmp0(addr, conn->addr)) {
+-		g_signal_emit(conn, conn_signals[ADDR_CHANGED], 0, ip_type, addr);
++		g_free(conn->addr);
+ 		conn->addr = addr;
++		if (addr != NULL) {
++			g_signal_emit(conn, conn_signals[ADDR_CHANGED], 0, ip_type, addr);
++		} else if (conn->requested && conn->reconnect_id == 0) {
++			conn->reconnect_id = g_timeout_add_seconds_full(
++				G_PRIORITY_DEFAULT, 2, reconnect_cb, g_object_ref(conn), g_object_unref);
++		}
+ 	} else {
+ 		g_free(addr);
+ 	}
+-- 
+2.56.1

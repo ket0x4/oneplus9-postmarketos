@@ -1,0 +1,190 @@
+From 2dcd7da1e3ac222464afae844c8d04af9e1fc475 Mon Sep 17 00:00:00 2001
+From: Nex <63727521+LuCiLuna@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:18:56 +0300
+Subject: [PATCH 149/167] arm64: pick the OnePlus 9 or 9 Pro device tree at boot
+
+The OnePlus 9 and 9 Pro are the same board with a different panel and camera
+set, so one kernel serves both. ABL only boots a DTB its downstream DTBO
+overlay applies to, which is why the mainline device tree is embedded and
+swapped in at boot; there now has to be a second one to swap in.
+
+Embed both trees and choose from what the bootloader reports: op9.device= on
+the command line first, then the oplus,dtsi_no project numbers, then the
+machine model string. "lemonade" is a prefix of "lemonadep", so it is tested
+second. The bootloader's own answer is logged before anything is guessed from
+it, and a boot that matches nothing keeps the first (9 Pro) device tree so the
+one tested phone cannot regress.
+---
+ arch/arm64/Kconfig                  | 16 ++++++
+ arch/arm64/kernel/Makefile          |  3 +
+ arch/arm64/kernel/op9-builtin-dtb.S | 10 +++-
+ arch/arm64/kernel/setup.c           | 85 ++++++++++++++++++++++++++++-
+ 4 files changed, 112 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+index 46235c323..14682e964 100644
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -2607,6 +2607,22 @@ config ARM64_OP9_BUILTIN_DTB_PATH
+ 	string "Path to the built-in DTB"
+ 	depends on ARM64_OP9_BUILTIN_DTB
+ 
++config ARM64_OP9_BUILTIN_DTB_2
++	bool "Also embed a second built-in DTB"
++	depends on ARM64_OP9_BUILTIN_DTB
++	help
++	  The OnePlus 9 and 9 Pro share a kernel but not a device tree. With
++	  this enabled a second DTB is embedded and op9_builtin_fdt() picks
++	  between the two from what the bootloader reports: the oplus,dtsi_no
++	  project number, the machine model, or op9.device= on the command line.
++
++	  ARM64_OP9_BUILTIN_DTB_PATH stays the first (OnePlus 9 Pro) DTB, so a
++	  boot that matches nothing keeps working as it did before.
++
++config ARM64_OP9_BUILTIN_DTB_PATH_2
++	string "Path to the second built-in DTB"
++	depends on ARM64_OP9_BUILTIN_DTB_2
++
+ endmenu # "Boot options"
+ 
+ menu "Power management options"
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index 5f49038f5..6853c1363 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -93,3 +93,6 @@ subdir- += vdso vdso32
+ obj-$(CONFIG_ARM64_OP9_BUILTIN_DTB)	+= op9-builtin-dtb.o
+ # .incbin isn't seen by fixdep, so rebuild when the DTB file changes
+ $(obj)/op9-builtin-dtb.o: $(CONFIG_ARM64_OP9_BUILTIN_DTB_PATH:"%"=%)
++ifdef CONFIG_ARM64_OP9_BUILTIN_DTB_2
++$(obj)/op9-builtin-dtb.o: $(CONFIG_ARM64_OP9_BUILTIN_DTB_PATH_2:"%"=%)
++endif
+diff --git a/arch/arm64/kernel/op9-builtin-dtb.S b/arch/arm64/kernel/op9-builtin-dtb.S
+index 5a69ff08d..26f594952 100644
+--- a/arch/arm64/kernel/op9-builtin-dtb.S
++++ b/arch/arm64/kernel/op9-builtin-dtb.S
+@@ -1,5 +1,5 @@
+ /* SPDX-License-Identifier: GPL-2.0-only */
+-/* BRING-UP: built-in mainline DTB for the OnePlus 9 Pro (see setup.c) */
++/* BRING-UP: built-in mainline DTBs for the OnePlus 9 series (see setup.c) */
+ 	.section .rodata, "a"
+ 	.balign 8
+ 	.global __op9_dtb_start
+@@ -7,3 +7,11 @@ __op9_dtb_start:
+ 	.incbin CONFIG_ARM64_OP9_BUILTIN_DTB_PATH
+ 	.global __op9_dtb_end
+ __op9_dtb_end:
++#ifdef CONFIG_ARM64_OP9_BUILTIN_DTB_2
++	.balign 8
++	.global __op9_dtb2_start
++__op9_dtb2_start:
++	.incbin CONFIG_ARM64_OP9_BUILTIN_DTB_PATH_2
++	.global __op9_dtb2_end
++__op9_dtb2_end:
++#endif
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 298f417ab..216074293 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -181,6 +181,89 @@ static const char * const op9_chosen_props[] = {
+ 	"bootargs", "linux,initrd-start", "linux,initrd-end", "kaslr-seed", "rng-seed",
+ };
+ 
++#ifdef CONFIG_ARM64_OP9_BUILTIN_DTB_2
++extern const u8 __op9_dtb2_start[];
++#endif
++
++/*
++ * BRING-UP: which of the embedded device trees this phone needs. The first is
++ * the OnePlus 9 Pro; the second, when enabled, is the OnePlus 9. Whether a
++ * phone boots at all depends on getting this right, so the bootloader's own
++ * answer is logged before any of the guessing below happens.
++ */
++static const u8 *op9_dtb_for(const void *boot)
++{
++#ifdef CONFIG_ARM64_OP9_BUILTIN_DTB_2
++	const fdt32_t *dtsi;
++	const char *bootargs, *model;
++	int root, oc, len, dlen, i;
++	bool pro = false, plain = false;
++
++	root = fdt_path_offset(boot, "/");
++	dtsi = fdt_getprop(boot, root, "oplus,dtsi_no", &dlen);
++	model = fdt_getprop(boot, root, "model", &len);
++
++	/* Say what the bootloader claims before guessing anything from it */
++	pr_info("op9: bootloader says model \"%s\"\n", model ? model : "(none)");
++	if (dtsi) {
++		pr_info("op9: oplus,dtsi_no =");
++		for (i = 0; i < dlen / (int)sizeof(*dtsi); i++)
++			pr_cont(" %#x", fdt32_to_cpu(dtsi[i]));
++		pr_cont("\n");
++	}
++
++	/* op9.device=lemonade|lemonadep picks one by hand */
++	oc = fdt_path_offset(boot, "/chosen");
++	bootargs = oc >= 0 ? fdt_getprop(boot, oc, "bootargs", &len) : NULL;
++	if (bootargs) {
++		if (strstr(bootargs, "op9.device=lemonadep"))
++			pro = true;
++		else if (strstr(bootargs, "op9.device=lemonade"))
++			plain = true;
++	}
++
++	/*
++	 * The project numbers ABL was built with outrank its model string. Both
++	 * phones report 19815 (0x4d67), so that one decides nothing; the Pro
++	 * adds 2085A (0x2085a), the plain 9 adds 19825 (0x4d71) and 20854
++	 * (0x5176). The Pro is looked for first so an unexpected extra number
++	 * cannot flip the answer.
++	 */
++	if (!pro && !plain && dtsi) {
++		for (i = 0; i < dlen / (int)sizeof(*dtsi); i++)
++			if (fdt32_to_cpu(dtsi[i]) == 0x2085a) /* LE212x */
++				pro = true;
++		if (!pro)
++			for (i = 0; i < dlen / (int)sizeof(*dtsi); i++) {
++				u32 v = fdt32_to_cpu(dtsi[i]);
++
++				if (v == 0x4d71 || v == 0x5176) /* LE211x */
++					plain = true;
++			}
++	}
++
++	/*
++	 * ABL's model string is the fallback. "lemonade" is a prefix of
++	 * "lemonadep", so it has to be tested second.
++	 */
++	if (!pro && !plain && model) {
++		if (strstr(model, "lemonadep"))
++			pro = true;
++		else if (strstr(model, "lemonade"))
++			plain = true;
++	}
++
++	if (plain) {
++		pr_info("op9: OnePlus 9, using the second embedded device tree\n");
++		return __op9_dtb2_start;
++	}
++	pr_info("op9: using the first embedded device tree\n");
++#else
++	(void)boot;
++#endif
++	return __op9_dtb_start;
++}
++
+ /* At least one bank of non-zero size, with two address and two size cells */
+ static bool __init op9_fdt_has_ram(const void *fdt, int node)
+ {
+@@ -201,7 +284,7 @@ static void * __init op9_builtin_fdt(const void *boot)
+ 	int bc, oc, bm, om, len, i;
+ 	const void *p;
+ 
+-	if (fdt_open_into(__op9_dtb_start, op9_fdt, sizeof(op9_fdt)))
++	if (fdt_open_into(op9_dtb_for(boot), op9_fdt, sizeof(op9_fdt)))
+ 		return NULL;
+ 
+ 	bc = fdt_path_offset(boot, "/chosen");
+-- 
+2.56.1
+

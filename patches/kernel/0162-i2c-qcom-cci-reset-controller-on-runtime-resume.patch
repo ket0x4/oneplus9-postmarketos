@@ -1,0 +1,31 @@
+From e79128718046405cbe3c4bc69c2a32f133960700 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?ibrahim=20y=C3=B6ndemli?= <ket0x4@pm.me>
+Date: Fri, 20 Nov 2026 10:53:13 +0300
+Subject: [PATCH 162/167] i2c: qcom-cci: reset controller on runtime resume
+
+After TITAN_TOP_GDSC power-collapses between probes or idle periods, re-programming registers with cci_init() alone leaves the controller stuck on the first transfer ('master X queue 0 timeout' / -ETIMEDOUT, e.g. imx471 failing probe until another transaction happens). Call cci_reset() (which invokes cci_init() after reset completes) on runtime resume so every transfer works after runtime suspend.
+---
+ drivers/i2c/busses/i2c-qcom-cci.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/i2c/busses/i2c-qcom-cci.c b/drivers/i2c/busses/i2c-qcom-cci.c
+index bd70c6bae..2dc056394 100644
+--- a/drivers/i2c/busses/i2c-qcom-cci.c
++++ b/drivers/i2c/busses/i2c-qcom-cci.c
+@@ -488,7 +488,12 @@ static int __maybe_unused cci_resume_runtime(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
+-	cci_init(cci);
++	ret = cci_reset(cci);
++	if (ret) {
++		cci_disable_clocks(cci);
++		return ret;
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.56.1
+

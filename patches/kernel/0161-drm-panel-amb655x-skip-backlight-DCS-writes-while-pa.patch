@@ -1,0 +1,54 @@
+From c8f1a577681ce097aa29cae8f0c0cee498536626 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?ibrahim=20y=C3=B6ndemli?= <ket0x4@pm.me>
+Date: Fri, 20 Nov 2026 10:53:12 +0300
+Subject: [PATCH 161/167] drm/panel: amb655x: skip backlight DCS writes while
+ panel is unprepared
+
+Do not send MIPI DCS backlight/control writes while the panel is powered down (between unprepare and prepare), avoiding -EINVAL/-EPROTO errors from logind/phosh on display blank and wake. Once amb655x_prepare() runs again, drm_panel_enable() invokes backlight_enable() and applies the stored brightness.
+---
+ drivers/gpu/drm/panel/panel-samsung-amb655x.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-samsung-amb655x.c b/drivers/gpu/drm/panel/panel-samsung-amb655x.c
+index 4b27af852..77cad5fc8 100644
+--- a/drivers/gpu/drm/panel/panel-samsung-amb655x.c
++++ b/drivers/gpu/drm/panel/panel-samsung-amb655x.c
+@@ -33,6 +33,7 @@ struct amb655x {
+ 	/* High-brightness mode: asked for through sysfs, and what the panel is in */
+ 	bool hbm_requested;
+ 	bool hbm_active;
++	bool prepared;
+ };
+ 
+ /*
+@@ -198,6 +199,8 @@ static int amb655x_prepare(struct drm_panel *panel)
+ 		return ret;
+ 	}
+ 
++	ctx->prepared = true;
++
+ 	return 0;
+ }
+ 
+@@ -205,6 +208,8 @@ static int amb655x_unprepare(struct drm_panel *panel)
+ {
+ 	struct amb655x *ctx = to_amb655x(panel);
+ 
++	ctx->prepared = false;
++
+ 	if (ctx->reset_gpio)
+ 		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+ 	gpiod_set_value_cansleep(ctx->vout_gpio, 0);
+@@ -294,6 +299,9 @@ static int amb655x_bl_update_status(struct backlight_device *bl)
+ 	u16 level = brightness;
+ 	int ret;
+ 
++	if (!ctx->prepared)
++		return 0;
++
+ 	/* The slider keeps working in high-brightness mode, over its range */
+ 	if (hbm)
+ 		level = AMB655X_HBM_MIN +
+-- 
+2.56.1
+

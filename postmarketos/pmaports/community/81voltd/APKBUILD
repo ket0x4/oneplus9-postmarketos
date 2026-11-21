@@ -1,0 +1,43 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# 81voltd with the IMS bearer reconnect patch. When the modem switches RATs
+# (4G <-> 5G) or NetworkManager runs SimpleDisconnect before SimpleConnect,
+# ModemManager tears down the IMS bearer although the modem's IMS stack never
+# asked for it (conn->requested is still TRUE), and VoLTE stays down until
+# something restarts the session. The patch reconnects 2 s after the address is
+# lost while the connection is still wanted.
+pkgname=81voltd
+pkgver=1.2.0
+_pkgver=1.2.0.r28
+_commit=a7794dd6c8ac216a97dc5a931edab2dfc46eca2a
+pkgrel=0
+pkgdesc="IMS data service for VoLTE on Qualcomm modems, with OnePlus 9 reconnect fix"
+url="https://gitlab.nura.eco/modem/81voltd"
+arch="aarch64"
+license="GPL-2.0-or-later"
+depends="glib libmm-glib libqmi qrtr modemmanager"
+makedepends="meson samurai glib-dev libqmi-dev modemmanager-dev"
+source="$pkgname-$_pkgver.tar.gz::https://gitlab.nura.eco/modem/81voltd/-/archive/$_commit/81voltd-$_commit.tar.gz
+	0001-qvd-connection-reconnect-IMS-bearer-if-dropped-remot.patch"
+builddir="$srcdir/81voltd-$_commit"
+
+prepare() {
+	default_prepare
+}
+
+build() {
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build"
+	# The OpenRC script isn't used on a systemd postmarketOS image
+	rm -rf "$pkgdir/etc/init.d"
+}
+
+sha512sums="
+26a1b175980250650d5f78e259297358110f28a78da8d12c4086bdc5f0b088000afaaa96e9db498e76fabdcf5ea70cdcc3d3c12d0a6f4ac2fbce2368b8f52783  $pkgname-$_pkgver.tar.gz
+6299d56298f91804ec1c8c5a58351935e2b479b8d03f2c249436cdef4b7a79d13b11acbaadd3df2104ae2dc4f003b334cff928c03368339e6b41d2a73fe632fa  0001-qvd-connection-reconnect-IMS-bearer-if-dropped-remot.patch
+"

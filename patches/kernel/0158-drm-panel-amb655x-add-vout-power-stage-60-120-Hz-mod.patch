@@ -1,0 +1,277 @@
+From 97f78f0e18c828b8c66032d602e085926fdcdcf9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?ibrahim=20y=C3=B6ndemli?= <ket0x4@pm.me>
+Date: Fri, 20 Nov 2026 10:09:06 +0300
+Subject: [PATCH 158/167] drm/panel: amb655x: add vout power stage, 60/120 Hz
+ mode_set and HBM
+
+Switch GPIO 25 (qcom,platform-panel-vout-gpio in the lemonadev DTBO) from prepare/unprepare so the panel power stage does not stay powered while blanked or suspended.
+
+Wire dsi->mode_set so selecting 60 Hz writes 0x60 = 0x00 instead of hardcoding 120 Hz (0x10), cap the normal backlight range at 2047, and expose the hbm / hbm_active sysfs attributes driving 0x53 = 0xe0 across 3240..4095 so op9-sunlight-hbm works on the OnePlus 9 as well.
+---
+ .../boot/dts/qcom/sm8350-oneplus-lemonade.dts |   1 +
+ drivers/gpu/drm/panel/panel-samsung-amb655x.c | 138 ++++++++++++++++--
+ 2 files changed, 128 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+index fa244e58c..b9229ba0b 100644
+--- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+@@ -224,6 +224,7 @@ &mpss {
+ /* Samsung AMB655X, 1080x2400 DSC command mode */
+ &display_panel {
+ 	compatible = "samsung,amb655x";
++	vout-gpios = <&tlmm 25 GPIO_ACTIVE_HIGH>;
+ 	status = "okay";
+ };
+ 
+diff --git a/drivers/gpu/drm/panel/panel-samsung-amb655x.c b/drivers/gpu/drm/panel/panel-samsung-amb655x.c
+index e3386de7f..4b27af852 100644
+--- a/drivers/gpu/drm/panel/panel-samsung-amb655x.c
++++ b/drivers/gpu/drm/panel/panel-samsung-amb655x.c
+@@ -25,10 +25,24 @@ struct amb655x {
+ 	struct drm_panel panel;
+ 	struct mipi_dsi_device *dsi;
+ 	struct drm_dsc_config dsc;
++	int hz;
+ 	struct gpio_desc *reset_gpio;
++	struct gpio_desc *vout_gpio;
+ 	struct regulator_bulk_data *supplies;
++
++	/* High-brightness mode: asked for through sysfs, and what the panel is in */
++	bool hbm_requested;
++	bool hbm_active;
+ };
+ 
++/*
++ * Brightness levels, from stock (lemonadev DTBO): 0-2047 is normal mode. In
++ * high-brightness mode the panel takes 3240 (0x0ca8) - 4095.
++ */
++#define AMB655X_BL_MAX	2047
++#define AMB655X_HBM_MIN	3240
++#define AMB655X_HBM_MAX	4095
++
+ static const struct regulator_bulk_data amb655x_supplies[] = {
+ 	{ .supply = "vddio" },	/* 1.8V */
+ 	{ .supply = "vdd" },	/* 3.0V */
+@@ -116,13 +130,20 @@ static int amb655x_on(struct amb655x *ctx)
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x20);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x10);
++	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x60,
++					 ctx->hz == 60 ? 0x00 : 0x10);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x55, 0x00);
+ 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
+ 
+-	return dsi_ctx.accum_err;
++	if (dsi_ctx.accum_err)
++		return dsi_ctx.accum_err;
++
++	/* The sequence above leaves 0x53 at 0x20: high-brightness mode off */
++	ctx->hbm_active = false;
++
++	return 0;
+ }
+ 
+ static int amb655x_enable(struct drm_panel *panel)
+@@ -160,6 +181,11 @@ static int amb655x_prepare(struct drm_panel *panel)
+ 	if (ret < 0)
+ 		return ret;
+ 
++	if (ctx->vout_gpio) {
++		gpiod_set_value_cansleep(ctx->vout_gpio, 1);
++		usleep_range(10000, 11000);
++	}
++
+ 	if (ctx->reset_gpio)
+ 		amb655x_reset(ctx);
+ 
+@@ -167,6 +193,7 @@ static int amb655x_prepare(struct drm_panel *panel)
+ 	if (ret < 0) {
+ 		if (ctx->reset_gpio)
+ 			gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		gpiod_set_value_cansleep(ctx->vout_gpio, 0);
+ 		regulator_bulk_disable(ARRAY_SIZE(amb655x_supplies), ctx->supplies);
+ 		return ret;
+ 	}
+@@ -180,6 +207,7 @@ static int amb655x_unprepare(struct drm_panel *panel)
+ 
+ 	if (ctx->reset_gpio)
+ 		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	gpiod_set_value_cansleep(ctx->vout_gpio, 0);
+ 	regulator_bulk_disable(ARRAY_SIZE(amb655x_supplies), ctx->supplies);
+ 
+ 	return 0;
+@@ -239,6 +267,14 @@ static int amb655x_get_modes(struct drm_panel *panel,
+ 	return ARRAY_SIZE(amb655x_modes);
+ }
+ 
++static void amb655x_mode_set(struct mipi_dsi_device *dsi,
++			     const struct drm_display_mode *mode)
++{
++	struct amb655x *ctx = mipi_dsi_get_drvdata(dsi);
++
++	ctx->hz = drm_mode_vrefresh(mode);
++}
++
+ static const struct drm_panel_funcs amb655x_panel_funcs = {
+ 	.prepare = amb655x_prepare,
+ 	.unprepare = amb655x_unprepare,
+@@ -249,34 +285,105 @@ static const struct drm_panel_funcs amb655x_panel_funcs = {
+ 
+ static int amb655x_bl_update_status(struct backlight_device *bl)
+ {
+-	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	struct amb655x *ctx = bl_get_data(bl);
++	struct mipi_dsi_device *dsi = ctx->dsi;
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
+ 	u16 brightness = backlight_get_brightness(bl);
++	bool hbm = ctx->hbm_requested && brightness;
++	u8 ctrl[] = { MIPI_DCS_WRITE_CONTROL_DISPLAY, hbm ? 0xe0 : 0x20 };
++	u16 level = brightness;
+ 	int ret;
+ 
++	/* The slider keeps working in high-brightness mode, over its range */
++	if (hbm)
++		level = AMB655X_HBM_MIN +
++			brightness * (AMB655X_HBM_MAX - AMB655X_HBM_MIN) /
++			AMB655X_BL_MAX;
++
+ 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+-	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
++
++	/* vendor qcom,mdss-dsi-hbm-enter-switch / -exit-switch */
++	if (hbm != ctx->hbm_active)
++		mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, ctrl, sizeof(ctrl));
++
++	ret = dsi_ctx.accum_err;
++	if (!ret)
++		ret = mipi_dsi_dcs_set_display_brightness_large(dsi, level);
++
+ 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+-	return ret < 0 ? ret : 0;
++	if (ret < 0)
++		return ret;
++
++	ctx->hbm_active = hbm;
++	return 0;
+ }
+ 
+ static const struct backlight_ops amb655x_bl_ops = {
+ 	.update_status = amb655x_bl_update_status,
+ };
+ 
+-static struct backlight_device *amb655x_create_backlight(struct mipi_dsi_device *dsi)
++static struct backlight_device *amb655x_create_backlight(struct amb655x *ctx)
+ {
+-	struct device *dev = &dsi->dev;
++	struct device *dev = &ctx->dsi->dev;
+ 	const struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+-		.brightness = 1023,
+-		.max_brightness = 4095,
++		.brightness = 360,	/* vendor qcom,mdss-brightness-default-level */
++		/* normal max; above is high-brightness mode, see the hbm attribute */
++		.max_brightness = AMB655X_BL_MAX,
+ 	};
+ 
+-	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
++	return devm_backlight_device_register(dev, dev_name(dev), dev, ctx,
+ 					      &amb655x_bl_ops, &props);
+ }
+ 
++/*
++ * hbm: 1 asks for high-brightness mode, which the panel then uses whenever it
++ * is lit. Stock enters it only from automatic brightness in bright light.
++ */
++static ssize_t hbm_show(struct device *dev, struct device_attribute *attr,
++			char *buf)
++{
++	struct amb655x *ctx = mipi_dsi_get_drvdata(to_mipi_dsi_device(dev));
++
++	return sysfs_emit(buf, "%d\n", ctx->hbm_requested);
++}
++
++static ssize_t hbm_store(struct device *dev, struct device_attribute *attr,
++			 const char *buf, size_t count)
++{
++	struct amb655x *ctx = mipi_dsi_get_drvdata(to_mipi_dsi_device(dev));
++	bool on;
++	int ret;
++
++	ret = kstrtobool(buf, &on);
++	if (ret)
++		return ret;
++
++	ctx->hbm_requested = on;
++	ret = backlight_update_status(ctx->panel.backlight);
++
++	return ret ?: count;
++}
++static DEVICE_ATTR_RW(hbm);
++
++/* hbm_active: whether the panel is in high-brightness mode right now */
++static ssize_t hbm_active_show(struct device *dev,
++			       struct device_attribute *attr, char *buf)
++{
++	struct amb655x *ctx = mipi_dsi_get_drvdata(to_mipi_dsi_device(dev));
++
++	return sysfs_emit(buf, "%d\n", ctx->hbm_active);
++}
++static DEVICE_ATTR_RO(hbm_active);
++
++static struct attribute *amb655x_attrs[] = {
++	&dev_attr_hbm.attr,
++	&dev_attr_hbm_active.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(amb655x);
++
+ static int amb655x_probe(struct mipi_dsi_device *dsi)
+ {
+ 	struct device *dev = &dsi->dev;
+@@ -298,6 +405,13 @@ static int amb655x_probe(struct mipi_dsi_device *dsi)
+ 		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
+ 				     "Failed to get reset-gpios\n");
+ 
++	/* The panel's power stage, left on by the bootloader */
++	ctx->vout_gpio = devm_gpiod_get_optional(dev, "vout", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->vout_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->vout_gpio),
++				     "Failed to get vout-gpios\n");
++
++	ctx->hz = 120;
+ 	ctx->dsi = dsi;
+ 	mipi_dsi_set_drvdata(dsi, ctx);
+ 
+@@ -308,7 +422,7 @@ static int amb655x_probe(struct mipi_dsi_device *dsi)
+ 	/* vendor qcom,mdss-dsi-lp11-init */
+ 	ctx->panel.prepare_prev_first = true;
+ 
+-	ctx->panel.backlight = amb655x_create_backlight(dsi);
++	ctx->panel.backlight = amb655x_create_backlight(ctx);
+ 	if (IS_ERR(ctx->panel.backlight))
+ 		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
+ 				     "Failed to create backlight\n");
+@@ -316,6 +430,7 @@ static int amb655x_probe(struct mipi_dsi_device *dsi)
+ 	drm_panel_add(&ctx->panel);
+ 
+ 	dsi->dsc = &ctx->dsc;
++	dsi->mode_set = amb655x_mode_set;
+ 	ctx->dsc.dsc_version_major = 1;
+ 	ctx->dsc.dsc_version_minor = 1;
+ 	ctx->dsc.slice_height = 30;
+@@ -353,6 +468,7 @@ static struct mipi_dsi_driver amb655x_driver = {
+ 	.driver = {
+ 		.name = "panel-samsung-amb655x",
+ 		.of_match_table = amb655x_of_match,
++		.dev_groups = amb655x_groups,
+ 	},
+ };
+ module_mipi_dsi_driver(amb655x_driver);
+-- 
+2.56.1
+

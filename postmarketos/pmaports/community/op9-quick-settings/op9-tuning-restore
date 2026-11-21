@@ -1,0 +1,40 @@
+#!/bin/sh
+# Re-apply the quick settings' sysfs choices at session start.
+#
+# Both knobs the Plasma Mobile and Phosh quick settings write (report_rate and
+# msm.natural_colour) live in sysfs, so the kernel resets them on every boot. The
+# settings save the user's choice to ~/.config/op9-tuning.ini; this applies it
+# again. Runs as the session user, after the udev rules in rootfs/ have granted
+# the `video` group write access (chgrp video + g+w on both knobs).
+set -eu
+
+INI=${XDG_CONFIG_HOME:-$HOME/.config}/op9-tuning.ini
+GROUP=quick-settings
+
+[ -r "$INI" ] || exit 0
+
+# kreadconfig6 is quiet on a missing key: it prints the fallback and exits 0.
+get() { kreadconfig6 --file "$INI" --group "$GROUP" --key "$1" --default "" 2>/dev/null; }
+
+# Write to each touch controller this port drives; there is one per phone.
+apply_touch() {
+	want=$(get touch-360hz)
+	[ -n "$want" ] || return 0
+	val=120
+	[ "$want" = "true" ] && val=360
+	for knob in /sys/bus/i2c/drivers/synaptics-tcm-i2c/*/report_rate \
+	            /sys/bus/i2c/drivers/s6sy761/*/report_rate; do
+		[ -w "$knob" ] && echo "$val" > "$knob" 2>/dev/null || true
+	done
+}
+
+apply_colour() {
+	want=$(get natural-colour)
+	[ -n "$want" ] || return 0
+	knob=/sys/module/msm/parameters/natural_colour
+	[ -w "$knob" ] || return 0
+	if [ "$want" = "true" ]; then echo Y > "$knob"; else echo N > "$knob"; fi
+}
+
+apply_touch
+apply_colour

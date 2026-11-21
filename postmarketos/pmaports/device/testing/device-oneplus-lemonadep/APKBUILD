@@ -1,0 +1,57 @@
+# Reference: <https://postmarketos.org/devicepkg>
+# Device metadata for pmbootstrap: codename, screen, and how to pack a boot image.
+# The kernel is not built by pmbootstrap here. This repository builds it from
+# kernel/patches, and postmarketos/build-pmos-image.sh installs the modules into
+# the image; linux-postmarketos-qcom-sm8350 is therefore not a dependency.
+pkgname=device-oneplus-lemonadep
+pkgdesc="OnePlus 9 Pro"
+pkgver=1
+pkgrel=1
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	alsa-ucm-conf
+	bluez-btmgmt
+	hexagonrpc
+	iw
+	libcamera
+	libcamera-ipa
+	libqmi
+	libssc
+	mesa-dri-gallium
+	mesa-vulkan-freedreno
+	mkbootimg
+	modemmanager
+	msm-modem
+	msm-modem-uim-selection
+	pipewire-spa-libcamera
+	postmarketos-base
+	postmarketos-base-systemd
+	qcom-diag
+	qmi-utils
+	qrtr
+	rmtfs
+	soc-qcom
+	soc-qcom-modem
+	tqftpserv
+	tuned
+	tuned-ppd
+	util-linux-misc
+	81voltd
+"
+makedepends="devicepkg-dev"
+source="deviceinfo"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+}
+
+sha512sums="
+SKIP  deviceinfo
+"

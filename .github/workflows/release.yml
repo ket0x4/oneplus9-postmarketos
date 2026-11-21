@@ -1,0 +1,64 @@
+# Publishes a release when a v* tag is pushed: the kernel build's Image,
+# modules, initramfs and the scripts that pack them into a boot image. No
+# firmware, no stock DTB blob and no per-phone data: all of that comes from
+# the user's own phone, as postmarketos/GUIDE.md describes. A root filesystem
+# tarball can join this later.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/kernel.yml
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: op9-kernel
+          path: out
+
+      # docs/releases/<tag>.md, when there is one, is the release's changelog
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          path: src
+          sparse-checkout: docs/releases
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          krel=$(cat out/KERNEL_RELEASE)
+          cat > notes.md <<NOTES
+          Kernel \`$krel\` for the OnePlus 9 and 9 Pro: \`Image\`, the modules, the initramfs and the
+          scripts that pack them into a boot image with your phone's own \`vendor_boot.img\`:
+
+              ./op9-boot-image.sh vendor_boot.img Image initramfs.gz op9-boot.img
+
+          The firmware, the stock DTB blob and your phone's sensor calibration are not included
+          and come from your phone. Follow the install guide for this tag; it erases the phone.
+          NOTES
+          # Provenance: what this Image was built from, so it can be rebuilt and checked.
+          if [ -f out/build-manifest.txt ]; then
+            {
+              printf '\n### What this was built from\n\n```\n'
+              cat out/build-manifest.txt
+              printf '```\n'
+              printf '\nThe build is reproducible: check out this tag, run `kernel/build.sh`, and\n'
+              printf '`Image` hashes to the same value (about 39 MB, no debug info).\n'
+            } >> notes.md
+          fi
+          changes="src/docs/releases/$GITHUB_REF_NAME.md"
+          if [ -f "$changes" ]; then
+            printf '\n' >> notes.md
+            cat "$changes" >> notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "OnePlus 9 series kernel $krel ($GITHUB_REF_NAME)" --notes-file notes.md out/*

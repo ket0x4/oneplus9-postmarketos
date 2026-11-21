@@ -1,0 +1,39 @@
+From dd445f4ed8ac3b5ce2e00b710217ec838bb3e0bd Mon Sep 17 00:00:00 2001
+From: OnePlus 9 Bring-up <op9-build@localhost>
+Date: Fri, 20 Nov 2026 11:19:14 +0300
+Subject: [PATCH 164/167] arm64: dts: qcom: sm8350-oneplus-lemonade: use AK7375C VCM on
+ ultrawide
+
+Stock DTBO marks qcom,cam-sensor@1 (ultrawide IMX766) with
+is-diff-af-support = <1>, and odm ships both imx766_lc898229 (7-bit 0x72)
+and imx766_ak7375c (8-bit 0xe8 / 7-bit 0x74, matched when EEPROM carries
+0xe9 at offset 0x0a).
+
+Live hardware on LE2115 has 0xe9 in 7-0051 EEPROM and returns -ENXIO on
+7-0072, so wire wide_vcm to asahi-kasei,ak7375 at 0x74.
+---
+ arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+index 247249fba..4dd085f0f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+@@ -440,10 +440,10 @@ imx766_ep: endpoint {
+ 		};
+ 	};
+ 
+-	/* Ultrawide camera focus motor, onsemi LC898229 */
+-	wide_vcm: focus@72 {
+-		compatible = "onnn,lc898229";
+-		reg = <0x72>;
++	/* Ultrawide camera focus motor, AKM AK7375C (some units use LC898229 at 0x72) */
++	wide_vcm: focus@74 {
++		compatible = "asahi-kasei,ak7375";
++		reg = <0x74>;
+ 		vdd-supply = <&vreg_l6i>;
+ 		vio-supply = <&vreg_l5i>;
+ 	};
+-- 
+2.56.1
+

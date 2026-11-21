@@ -1,0 +1,71 @@
+From f5ee78282a2977829dca0bb352b309cf2d6150cf Mon Sep 17 00:00:00 2001
+From: OnePlus 9 Bring-up <op9-build@localhost>
+Date: Fri, 20 Nov 2026 11:19:05 +0300
+Subject: [PATCH 163/167] media: qcom: camss: stop started subdevs when start_streaming
+ fails
+
+If v4l2_subdev_call(subdev, video, s_stream, 1) fails partway along the
+media pipeline (for example at the camera sensor), video_start_streaming()
+jumped to error without calling s_stream(0) on the upstream subdevs that
+already started (vfe0_rdi0, csid0, csiphy). That left sd->s_stream_enabled
+set to 1 on those subdevs so the next capture attempt hit call_s_stream()
+WARN_ON and skipped starting them on the new link.
+
+Unwind s_stream(0) on all subdevs before the failed entity before stopping
+the pipeline.
+---
+ .../media/platform/qcom/camss/camss-video.c   | 27 ++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 0852eb6f1..6f7b9f3a4 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -253,7 +253,7 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ {
+ 	struct camss_video *video = vb2_get_drv_priv(q);
+ 	struct video_device *vdev = &video->vdev;
+-	struct media_entity *entity;
++	struct media_entity *entity, *failed_entity;
+ 	struct media_pad *pad;
+ 	struct v4l2_subdev *subdev;
+ 	int ret;
+@@ -282,12 +282,33 @@ static int video_start_streaming(struct vb2_queue *q, unsigned int count)
+ 		subdev = media_entity_to_v4l2_subdev(entity);
+ 
+ 		ret = v4l2_subdev_call(subdev, video, s_stream, 1);
+-		if (ret < 0 && ret != -ENOIOCTLCMD)
+-			goto error;
++		if (ret < 0 && ret != -ENOIOCTLCMD) {
++			failed_entity = entity;
++			goto error_stop_subdevs;
++		}
+ 	}
+ 
+ 	return 0;
+ 
++error_stop_subdevs:
++	entity = &vdev->entity;
++	while (1) {
++		pad = &entity->pads[0];
++		if (!(pad->flags & MEDIA_PAD_FL_SINK))
++			break;
++
++		pad = media_pad_remote_pad_first(pad);
++		if (!pad || !is_media_entity_v4l2_subdev(pad->entity))
++			break;
++
++		entity = pad->entity;
++		if (entity == failed_entity)
++			break;
++
++		subdev = media_entity_to_v4l2_subdev(entity);
++		v4l2_subdev_call(subdev, video, s_stream, 0);
++	}
++
+ error:
+ 	video_device_pipeline_stop(vdev);
+ 
+-- 
+2.56.1
+

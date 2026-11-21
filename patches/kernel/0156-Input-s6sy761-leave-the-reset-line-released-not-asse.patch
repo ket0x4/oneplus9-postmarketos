@@ -1,0 +1,47 @@
+From 3d5508e2c4e2129961ae0cdf2020f3eae707f8f0 Mon Sep 17 00:00:00 2001
+From: Nex <63727521+LuCiLuna@users.noreply.github.com>
+Date: Thu, 19 Nov 2026 22:28:10 +0300
+Subject: [PATCH 156/167] Input: s6sy761: leave the reset line released, not asserted
+
+reset-gpios is GPIO_ACTIVE_LOW, so the pulse ended with a logical 1, which
+asserts the line and holds the controller in reset. The probe then reads the
+event stack over that same held-in-reset part and gets -EIO from the GENI
+engine, every time, at every address, so it looked like a broken bus rather
+than a chip that was never released.
+
+Pulse it the other way round: assert, wait, then deassert and leave it there.
+On the OnePlus 9's S6SY792 this is the difference between "geni_i2c
+990000.i2c: GPI transfer failed: -5" and a working touchscreen (device id
+0x3792, 10 slots, IRQ on GPIO 23 firing).
+---
+ drivers/input/touchscreen/s6sy761.c | 10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/input/touchscreen/s6sy761.c b/drivers/input/touchscreen/s6sy761.c
+index 7db6e8ef2..b77587f5e 100644
+--- a/drivers/input/touchscreen/s6sy761.c
++++ b/drivers/input/touchscreen/s6sy761.c
+@@ -304,15 +304,15 @@ static int s6sy761_power_on(struct s6sy761_data *sdata)
+ 		return ret;
+ 
+ 	/*
+-	 * Some boards have the reset line wired to the controller even though
+-	 * the bootloader may leave it released; pulse it so the controller
+-	 * starts from a known state.
++	 * reset-gpios is GPIO_ACTIVE_LOW, so a logical 1 asserts it. Pulse it
++	 * and leave it released: the controller answers nothing while it is
++	 * held in reset.
+ 	 */
+ 	if (sdata->reset_gpio) {
+-		gpiod_set_value_cansleep(sdata->reset_gpio, 0);
+-		usleep_range(1000, 2000);
+ 		gpiod_set_value_cansleep(sdata->reset_gpio, 1);
+ 		usleep_range(1000, 2000);
++		gpiod_set_value_cansleep(sdata->reset_gpio, 0);
++		usleep_range(1000, 2000);
+ 	}
+ 
+ 	msleep(140);
+-- 
+2.56.1
+

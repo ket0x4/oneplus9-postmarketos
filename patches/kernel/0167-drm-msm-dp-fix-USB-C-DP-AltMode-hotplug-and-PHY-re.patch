@@ -1,0 +1,96 @@
+From: Antigravity <antigravity@local>
+Subject: [PATCH 167/167] drm/msm/dp: fix USB-C DP AltMode hotplug detect, AUX reset, and PHY error cleanup
+
+Fix three issues seen on SM8350 USB-C DisplayPort AltMode docks
+(e.g. DP-to-HDMI branch OUI 00-10-fa dev-ID cHDMIb):
+
+1. In msm_dp_hpd_plug_handle(), return early if dp->plugged is already
+   true to avoid redundant DPCD/EDID/DP_SET_POWER probing and pm_runtime
+   reference leaks when drm_bridge_connector_detect() invokes hpd_notify.
+2. In msm_dp_bridge_detect(), return cached connection status immediately
+   when dp->plugged is true instead of re-probing AUX on every userspace
+   getconnector() call (which stalls Wayland compositors before link
+   training starts).
+3. In msm_dp_aux_transfer(), allow msm_dp_aux_reset() when aux->enable_xfers
+   is true (since msm_dp_aux_is_link_connected() reads the physical HPD pin,
+   which is always 0 on out-of-band USB-C DP AltMode).
+4. In msm_dp_ctrl_enable_mainlink_clocks(), power off the PHY on link clock
+   failure (and retry PHY init once) so phy->power_count and
+   qmp->dp_powered_on do not leak and permanently wedge subsequent
+   enable or typec_mux_set calls.
+
+diff --git a/drivers/gpu/drm/msm/dp/dp_aux.c b/drivers/gpu/drm/msm/dp/dp_aux.c
+index 3825a2fb4..b4f4b0e5c 100644
+--- a/drivers/gpu/drm/msm/dp/dp_aux.c
++++ b/drivers/gpu/drm/msm/dp/dp_aux.c
+@@ -411,8 +411,8 @@ static ssize_t msm_dp_aux_transfer(struct drm_dp_aux *msm_dp_aux,
+ 			if (!(aux->retry_cnt % MAX_AUX_RETRIES))
+ 				phy_calibrate(aux->phy);
+ 		}
+-		/* reset aux if link is in connected state */
+-		if (msm_dp_aux_is_link_connected(msm_dp_aux))
++		/* reset aux if link is in connected state or xfers enabled (USB-C DP AltMode) */
++		if (aux->enable_xfers || msm_dp_aux_is_link_connected(msm_dp_aux))
+ 			msm_dp_aux_reset(aux);
+ 	} else {
+ 		aux->retry_cnt = 0;
+diff --git a/drivers/gpu/drm/msm/dp/dp_ctrl.c b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+index 59070f399..55316206c 100644
+--- a/drivers/gpu/drm/msm/dp/dp_ctrl.c
++++ b/drivers/gpu/drm/msm/dp/dp_ctrl.c
+@@ -1840,8 +1840,19 @@ static int msm_dp_ctrl_enable_mainlink_clocks(struct msm_dp_ctrl_private *ctrl,
+ 
+ 	dev_pm_opp_set_rate(ctrl->dev, ctrl->link->link_params.rate * 1000);
+ 	ret = msm_dp_ctrl_link_clk_enable(&ctrl->msm_dp_ctrl);
+-	if (ret)
+-		DRM_ERROR("Unable to start link clocks. ret=%d\n", ret);
++	if (ret) {
++		DRM_ERROR("Unable to start link clocks. ret=%d, retrying PHY init\n", ret);
++		phy_power_off(phy);
++		phy_exit(phy);
++		phy_init(phy);
++		phy_configure(phy, &ctrl->phy_opts);
++		phy_power_on(phy);
++		ret = msm_dp_ctrl_link_clk_enable(&ctrl->msm_dp_ctrl);
++		if (ret) {
++			DRM_ERROR("Unable to start link clocks after PHY reinit. ret=%d\n", ret);
++			phy_power_off(phy);
++		}
++	}
+ 
+ 	drm_dbg_dp(ctrl->drm_dev, "link rate=%d\n", ctrl->link->link_params.rate);
+ 
+diff --git a/drivers/gpu/drm/msm/dp/dp_display.c b/drivers/gpu/drm/msm/dp/dp_display.c
+index 4dcbd9b99..2368e8d36 100644
+--- a/drivers/gpu/drm/msm/dp/dp_display.c
++++ b/drivers/gpu/drm/msm/dp/dp_display.c
+@@ -411,6 +411,9 @@ static int msm_dp_hpd_plug_handle(struct msm_dp_display_private *dp)
+ 
+ 	guard(mutex)(&dp->plugged_lock);
+ 
++	if (dp->plugged)
++		return 0;
++
+ 	ret = pm_runtime_resume_and_get(&pdev->dev);
+ 	if (ret) {
+ 		DRM_ERROR("failed to pm_runtime_resume\n");
+@@ -903,6 +906,19 @@ enum drm_connector_status msm_dp_bridge_detect(struct drm_bridge *bridge,
+ 	priv = container_of(dp, struct msm_dp_display_private, msm_dp_display);
+ 
+ 	guard(mutex)(&priv->plugged_lock);
++
++	/*
++	 * On USB-C DP AltMode, HPD is delivered out-of-band via pmic_glink_altmode
++	 * and msm_dp_hpd_plug_handle() has already probed DPCD, EDID, and sink_count.
++	 * Avoid re-probing AUX on every userspace getconnector() call, which stalls
++	 * compositors and triggers AUX timeouts on DP-to-HDMI branch adapters
++	 * (e.g. OUI 00-10-fa cHDMIb) before link training starts.
++	 */
++	if (priv->plugged)
++		return priv->link->sink_count > 0 ?
++			connector_status_connected :
++			connector_status_disconnected;
++
+ 	ret = pm_runtime_resume_and_get(&dp->pdev->dev);
+ 	if (ret) {
+ 		DRM_ERROR("failed to pm_runtime_resume\n");

@@ -1,0 +1,50 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# ModemManager with the LOC master-client patch. The SM8350 modem won't start its
+# GPS engine until the phone side registers as its "master client" with a fixed
+# key; Android's location service does that and upstream ModemManager does not, so
+# every position request fails with QMI GeneralError.
+pkgname=modemmanager
+pkgver=1.24.2
+pkgrel=0
+pkgdesc="Modem management daemon, with the OnePlus 9 GPS master-client patch"
+url="https://www.freedesktop.org/wiki/Software/ModemManager/"
+arch="aarch64"
+license="GPL-2.0-or-later AND LGPL-2.1-or-later"
+depends="glib libgudev libmbim libqmi libqrtr-glib libmm-glib polkit
+	mobile-broadband-provider-info ppp bash"
+makedepends="meson samurai glib-dev libgudev-dev libmbim-dev libqmi-dev
+	libqrtr-glib-dev polkit-dev vala gobject-introspection-dev bash-completion
+	libqmi-dev"
+subpackages="$pkgname-dev $pkgname-doc"
+replaces="modemmanager"
+source="$pkgname-$pkgver.tar.gz::https://gitlab.freedesktop.org/mobile-broadband/ModemManager/-/archive/$pkgver/ModemManager-$pkgver.tar.gz
+	0001-shared-qmi-register-as-LOC-master-client-before-star.patch"
+builddir="$srcdir/ModemManager-$pkgver"
+
+prepare() {
+	default_prepare
+}
+
+build() {
+	meson setup "$builddir/build" "$builddir" \
+		--prefix=/usr \
+		--buildtype=plain \
+		-D systemdsystemunitdir=/usr/lib/systemd/system \
+		-D udevbase_dir=/usr/lib/udev \
+		-D dbus_conf_dir=/usr/share/dbus-1/system.d \
+		-D polkit_dir=/usr/share/polkit-1 \
+		-D gtk_doc=false \
+		-D introspection=true \
+		-D tests=false \
+		-D man=false
+	meson compile -C "$builddir/build"
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install -C "$builddir/build"
+}
+
+sha512sums="
+341a795e6aa4f76f606a57921511233eb68510bea0bc6967449e2d2bb5949106c7d17ae964683797734c1cd688ac15ad076e08cc1d54aee22a16d23a9ca61510  $pkgname-$pkgver.tar.gz
+d462a7579f289fcfd450fee9397f278d91c1353c6a20df1d4cc9b1ee75fa17af80c7fc4500fb0983892364f67979bae914d28817e75adc4bbf93a245b9e20d7d  0001-shared-qmi-register-as-LOC-master-client-before-star.patch
+"

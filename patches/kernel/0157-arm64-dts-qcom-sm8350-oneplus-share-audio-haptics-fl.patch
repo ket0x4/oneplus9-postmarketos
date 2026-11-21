@@ -1,0 +1,1127 @@
+From 8a240c1f67b24f918e05372c801fcf55cb9cfa2a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?ibrahim=20y=C3=B6ndemli?= <ket0x4@pm.me>
+Date: Fri, 20 Nov 2026 10:08:06 +0300
+Subject: [PATCH 157/167] arm64: dts: qcom: sm8350-oneplus: share audio,
+ haptics, flash, charging and USB-C
+
+Move the board peripherals that are identical between the OnePlus 9 and 9 Pro (speakers, WCD9380 codec, DMICs, q6voice call audio, AW8697 haptics, flash LED, pmic_glink charging/OTG/wireless-RX wiring, DisplayPort alt mode, disabled pm8008j, MAC/BD placeholders and dwc3 USB role switching) from lemonadep into sm8350-oneplus-common.dtsi.
+
+On lemonade, drop the temporary dr_mode = "peripheral" pin now that dwc3 defaults to peripheral via role-switch-default-mode until ADSP/UCSI reports a role, set the sound card model to "OnePlus 9", and add the lemonadev oplus-sensor calibration/direction table read from the stock DTBO.
+---
+ .../boot/dts/qcom/sm8350-oneplus-common.dtsi  | 393 ++++++++++++++++-
+ .../boot/dts/qcom/sm8350-oneplus-lemonade.dts | 142 +++++-
+ .../dts/qcom/sm8350-oneplus-lemonadep.dts     | 413 +-----------------
+ 3 files changed, 529 insertions(+), 419 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-common.dtsi b/arch/arm64/boot/dts/qcom/sm8350-oneplus-common.dtsi
+index 88875f8b6..c58ee188d 100644
+--- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-common.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-common.dtsi
+@@ -10,8 +10,11 @@
+ #define SMB139x_1_SID 0x0b
+ #define SMB139x_2_SID 0x0c
+ #include <dt-bindings/iio/qcom,spmi-adc7-smb139x.h>
++#include <dt-bindings/leds/common.h>
++#include <dt-bindings/media/video-interfaces.h>
+ #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++#include <dt-bindings/sound/qcom,q6voice.h>
+ #include "sm8350.dtsi"
+ #include "pm8350.dtsi"
+ #include "pm8350b.dtsi"
+@@ -103,10 +106,20 @@ key-vol-down {
+ 		};
+ 	};
+ 
++	/*
++	 * OTG VBUS comes from an external boost enabled by GPIO 8, which the
++	 * OnePlus charger firmware asks for over pmic_glink.
++	 */
+ 	pmic_glink: pmic-glink {
+ 		compatible = "qcom,sm8350-pmic-glink", "qcom,pmic-glink";
+ 		/* the ADSP battery reads 0%; the bq27541 gauges the cells */
+ 		qcom,no-battery;
++		oplus,fuel-gauge = <&bq27541>;
++		oplus,otg-boost-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
++		oplus,otg-wrx-en-gpios = <&pm8350c_gpios 6 GPIO_ACTIVE_HIGH>;
++		oplus,wireless-rx-en-gpios = <&pm8350c_gpios 2 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&otg_boost_default>, <&otg_wrx_en_default>;
++		pinctrl-names = "default";
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+ 
+@@ -230,6 +243,153 @@ vph_pwr: regulator-vph-pwr {
+ 		regulator-always-on;
+ 		regulator-boot-on;
+ 	};
++
++	wcd938x: audio-codec {
++		compatible = "qcom,wcd9380-codec";
++
++		pinctrl-0 = <&wcd_reset_n>;
++		pinctrl-names = "default";
++
++		reset-gpios = <&tlmm 88 GPIO_ACTIVE_LOW>;
++
++		vdd-buck-supply = <&pm8350_s10>;
++		vdd-rxtx-supply = <&pm8350_s10>;
++		vdd-io-supply = <&pm8350_s10>;
++		vdd-mic-bias-supply = <&vreg_bob>;
++
++		qcom,micbias1-microvolt = <1800000>;
++		qcom,micbias2-microvolt = <2700000>;
++		qcom,micbias3-microvolt = <1800000>;
++		qcom,micbias4-microvolt = <1800000>;
++		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
++		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
++		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
++		qcom,rx-device = <&wcd_rx>;
++		qcom,tx-device = <&wcd_tx>;
++
++		#sound-dai-cells = <1>;
++	};
++
++	sound: sound {
++		compatible = "qcom,sm8250-sndcard";
++		pinctrl-0 = <&tert_mi2s_active>;
++		pinctrl-names = "default";
++
++		/*
++		 * Built-in mics are DMICs read by the TX macro, clocked by the VA
++		 * macro and powered by WCD938x mic biases (as downstream).
++		 */
++		audio-routing = "TX DMIC0", "MIC BIAS3",
++				"TX DMIC0", "VA DMIC01 CLK",
++				"TX DMIC1", "MIC BIAS1",
++				"TX DMIC1", "VA DMIC01 CLK",
++				"TX DMIC2", "MIC BIAS1",
++				"TX DMIC2", "VA DMIC23 CLK",
++				"TX DMIC3", "MIC BIAS3",
++				"TX DMIC3", "VA DMIC23 CLK",
++				"TX DMIC4", "MIC BIAS4",
++				"TX DMIC4", "VA DMIC45 CLK",
++				"TX DMIC5", "MIC BIAS4",
++				"TX DMIC5", "VA DMIC45 CLK",
++				"AMIC2", "MIC BIAS2";
++
++		mm1-dai-link {
++			link-name = "MultiMedia1";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
++			};
++		};
++
++		mm2-dai-link {
++			link-name = "MultiMedia2";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
++			};
++		};
++
++		mm3-dai-link {
++			link-name = "MultiMedia3";
++
++			cpu {
++				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
++			};
++		};
++
++		/* Modem voice calls, routed inside the DSP like stock "voicemmode1-call" */
++		voicemmode1-dai-link {
++			link-name = "VoiceMMode1";
++
++			cpu {
++				sound-dai = <&q6voicedai VOICEMMODE1>;
++			};
++		};
++
++		speaker-dai-link {
++			link-name = "Speaker Playback";
++
++			cpu {
++				sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++
++			codec {
++				sound-dai = <&speaker_top>, <&speaker_bottom>;
++			};
++		};
++
++		wcd-playback-dai-link {
++			link-name = "WCD Playback";
++
++			cpu {
++				sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
++			};
++
++			codec {
++				sound-dai = <&wcd938x 0>, <&swr1 0>, <&rxmacro 0>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++		};
++
++		va-dai-link {
++			link-name = "VA Capture";
++
++			cpu {
++				sound-dai = <&q6afedai VA_CODEC_DMA_TX_0>;
++			};
++
++			codec {
++				sound-dai = <&vamacro 0>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++		};
++
++		wcd-capture-dai-link {
++			link-name = "WCD Capture";
++
++			cpu {
++				sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
++			};
++
++			codec {
++				sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
++			};
++
++			platform {
++				sound-dai = <&q6routing>;
++			};
++		};
++	};
+ };
+ 
+ &adsp {
+@@ -736,9 +896,11 @@ vreg_l7i: ldo7 {
+ 		};
+ 	};
+ 
++	/* Not populated (no ACK at 0x0c/0x0d); no camera uses it */
+ 	pm8008j: pmic@c {
+ 		compatible = "qcom,pm8008";
+ 		reg = <0xc>;
++		status = "disabled";
+ 
+ 		reset-gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+ 		pinctrl-0 = <&pm8008j_reset_n>;
+@@ -861,8 +1023,9 @@ &mdss {
+ 	//status = "okay";
+ };
+ 
++/* DisplayPort alt mode over USB-C */
+ &mdss_dp {
+-	//status = "okay";
++	status = "okay";
+ };
+ 
+ &mdss_dp_out {
+@@ -934,9 +1097,11 @@ pcieport0: pcie@0 {
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		/* Set by WIFI_MAC in kernel/build.sh; zeros keep the firmware's placeholder */
+ 		wifi: wifi@0 {
+ 			compatible = "pci17cb,1103";
+ 			reg = <0x10000 0x0 0x0 0x0 0x0>;
++			local-mac-address = [00 00 00 00 00 00];
+ 
+ 			vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
+ 			vddaon-supply = <&vreg_pmu_aon_0p8>;
+@@ -1486,6 +1651,51 @@ tp_irq_suspend: tp-irq-suspend-state {
+ 		drive-strength = <2>;
+ 		bias-pull-down;
+ 	};
++
++	otg_boost_default: otg-boost-default-state {
++		pins = "gpio8";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++		output-low;
++	};
++
++	tert_mi2s_active: tert-mi2s-active-state {
++		sck-pins {
++			pins = "gpio120";
++			function = "mi2s2_sck";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data0-pins {
++			pins = "gpio121";
++			function = "mi2s2_data0";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		ws-pins {
++			pins = "gpio122";
++			function = "mi2s2_ws";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data1-pins {
++			pins = "gpio124";
++			function = "mi2s2_data1";
++			drive-strength = <8>;
++			bias-disable;
++		};
++	};
++
++	wcd_reset_n: wcd-reset-n-state {
++		pins = "gpio88";
++		function = "gpio";
++		drive-strength = <16>;
++		output-high;
++	};
+ };
+ 
+ &uart2 {
+@@ -1496,8 +1706,10 @@ &uart18 {
+ 	pinctrl-0 = <&qup_uart18_4pin>;
+ 	status = "okay";
+ 
++	/* Set by BT_ADDR in kernel/build.sh; without it the adapter stays unconfigured */
+ 	bluetooth: bluetooth {
+ 		compatible = "qcom,wcn6855-bt";
++		local-bd-address = [00 00 00 00 00 00];
+ 
+ 		vddrfacmn-supply = <&vreg_pmu_rfa_cmn_0p8>;
+ 		vddaon-supply = <&vreg_pmu_aon_0p8>;
+@@ -1542,8 +1754,15 @@ &usb_1 {
+ 	status = "okay";
+ };
+ 
++/*
++ * USB role follows the Type-C port via pmic_glink UCSI on the ADSP. Default
++ * to peripheral so the USB gadget (network/serial) works before the ADSP and
++ * UCSI are up.
++ */
+ &usb_1_dwc3 {
+ 	dr_mode = "otg";
++	usb-role-switch;
++	role-switch-default-mode = "peripheral";
+ 	/*
+ 	 * The QMP USB3/DP PHY is Gen 1 only; SuperSpeed Plus link training
+ 	 * stalls in Polling. On this DWC_usb31 core dwc3 then sets
+@@ -1577,3 +1796,175 @@ &usb_1_hsphy {
+ 
+ 	status = "okay";
+ };
++
++&i2c17 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	haptics@5a {
++		compatible = "awinic,aw8697";
++		reg = <0x5a>;
++
++		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
++	};
++};
++
++/* Speaker amplifiers: tertiary MI2S, SD1 out to the amps, SD0 feedback in */
++&i2c19 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	/* Earpiece/top speaker, plays the left I2S slot */
++	speaker_top: audio-codec@34 {
++		compatible = "nxp,tfa9874";
++		reg = <0x34>;
++		reset-gpios = <&tlmm 15 GPIO_ACTIVE_HIGH>;
++		vdd-supply = <&pm8350_s10>;
++		nxp,tdm-slot = <0>;
++		sound-name-prefix = "Top";
++		#sound-dai-cells = <0>;
++	};
++
++	/* Bottom speaker, plays the right I2S slot */
++	speaker_bottom: audio-codec@35 {
++		compatible = "nxp,tfa9874";
++		reg = <0x35>;
++		reset-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
++		vdd-supply = <&pm8350_s10>;
++		nxp,tdm-slot = <1>;
++		sound-name-prefix = "Bottom";
++		#sound-dai-cells = <0>;
++	};
++};
++
++/* Rear flash: two channels driven together, as the stock camera does */
++&pm8350c_flash {
++	status = "okay";
++
++	led-0 {
++		function = LED_FUNCTION_FLASH;
++		color = <LED_COLOR_ID_WHITE>;
++		led-sources = <1>, <2>;
++		led-max-microamp = <400000>;
++		flash-max-microamp = <2000000>;
++		flash-max-timeout-us = <1280000>;
++	};
++};
++
++&pm8350c_gpios {
++	otg_wrx_en_default: otg-wrx-en-default-state {
++		pins = "gpio6";
++		function = "normal";
++		power-source = <1>;
++		bias-disable;
++		qcom,drive-strength = <3>;
++		output-low;
++	};
++};
++
++&rxmacro {
++	status = "okay";
++};
++
++&swr1 {
++	status = "okay";
++
++	wcd_rx: codec@0,4 {
++		compatible = "sdw20217010d00";
++		reg = <0 4>;
++		qcom,rx-port-mapping = <1 2 3 4 5>;
++	};
++};
++
++&swr2 {
++	status = "okay";
++
++	wcd_tx: codec@0,3 {
++		compatible = "sdw20217010d00";
++		reg = <0 3>;
++		qcom,tx-port-mapping = <1 1 2 3>;
++	};
++};
++
++&lpass_tlmm {
++	dmic01_active: dmic01-active-state {
++		clk-pins {
++			pins = "gpio6";
++			function = "dmic1_clk";
++			drive-strength = <8>;
++			output-high;
++		};
++
++		data-pins {
++			pins = "gpio7";
++			function = "dmic1_data";
++			drive-strength = <8>;
++		};
++	};
++
++	dmic23_active: dmic23-active-state {
++		clk-pins {
++			pins = "gpio8";
++			function = "dmic2_clk";
++			drive-strength = <8>;
++			output-high;
++		};
++
++		data-pins {
++			pins = "gpio9";
++			function = "dmic2_data";
++			drive-strength = <8>;
++		};
++	};
++
++	dmic45_active: dmic45-active-state {
++		clk-pins {
++			pins = "gpio12";
++			function = "dmic3_clk";
++			drive-strength = <8>;
++			output-high;
++		};
++
++		data-pins {
++			pins = "gpio13";
++			function = "dmic3_data";
++			drive-strength = <8>;
++		};
++	};
++};
++
++&txmacro {
++	status = "okay";
++};
++
++&vamacro {
++	pinctrl-0 = <&dmic01_active>, <&dmic23_active>, <&dmic45_active>;
++	pinctrl-names = "default";
++	qcom,dmic-sample-rate = <600000>;
++	status = "okay";
++};
++
++&q6afedai {
++	dai@20 {
++		reg = <TERTIARY_MI2S_RX>;
++		qcom,sd-lines = <1>;
++	};
++};
++
++&q6cvp {
++	status = "okay";
++};
++
++&q6cvs {
++	status = "okay";
++};
++
++&q6mvm {
++	status = "okay";
++};
++
++&q6voicedai {
++	dai@1 {
++		reg = <VOICEMMODE1>;
++	};
++};
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+index c33b0dd10..fa244e58c 100644
+--- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+@@ -24,6 +24,139 @@ / {
+ 	 * and 0x5176 = 20854 are this phone's own, as read from the bootloader.
+ 	 */
+ 	oplus,dtsi_no = <0x4d67 0x4d71 0x5176>;
++
++	/*
++	 * Sensor chips and tuning for the OnePlus SLPI sensor drivers, copied
++	 * from the downstream lemonadev oplus_sensor node; oplus-sensor-devinfo
++	 * hands it to the SLPI in SMEM item 130.
++	 */
++	oplus-sensor {
++		compatible = "oplus,sensor-devinfo";
++		als-row-coe = <0x3e8>;
++
++		gsensor@0 {
++			sensor-name = <0x02>;
++			sensor-direction = <0x04>;
++			sensor-index = <0x00>;
++			sensor-type = <0x00>;
++		};
++
++		gsensor@1 {
++			sensor-name = <0x20>;
++			sensor-direction = <0x00>;
++			sensor-index = <0x01>;
++			sensor-type = <0x00>;
++		};
++
++		msensor@0 {
++			sensor-name = <0x01>;
++			sensor-direction = <0x02>;
++			sensor-index = <0x00>;
++			sensor-type = <0x02>;
++			parameter-number = <0x12>;
++			soft-mag-parameter = <0x2710 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x2710 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x2710 0x00>;
++		};
++
++		msensor@1 {
++			sensor-name = <0x02>;
++			sensor-direction = <0x02>;
++			sensor-index = <0x01>;
++			sensor-type = <0x02>;
++			parameter-number = <0x12>;
++			soft-mag-parameter = <0x26b8 0x00 0x4b1 0x00 0x22c 0x01 0x324 0x00 0x2440 0x00 0xc9 0x01 0x26b 0x00 0xf7 0x01 0x28fc 0x00>;
++		};
++
++		lsensor@0 {
++			sensor-name = <0x08>;
++			sensor-index = <0x00>;
++			sensor-type = <0x03>;
++			als-type = <0x00>;
++			is-unit-device = <0x00>;
++			is-als-dri = <0x00>;
++			als-factor = <0x3e8>;
++			is_als_initialed = <0x00>;
++			als_buffer_length = <0x0a>;
++		};
++
++		psensor@0 {
++			sensor-name = <0x01>;
++			sensor-index = <0x00>;
++			sensor-type = <0x04>;
++			bus-number = <0x05>;
++			irq-number = <0x59>;
++			ps-type = <0x01>;
++			ps_saturation = <0xa28>;
++			is_need_close_pd = <0x00>;
++			parameter-number = <0x04>;
++			sensor-reg = <0x01 0x31 0x03 0x60 0xdb 0x00>;
++		};
++
++		bsensor@0 {
++			sensor-name = <0x01>;
++			sensor-index = <0x00>;
++			sensor-type = <0x08>;
++		};
++
++		bsensor@1 {
++			sensor-name = <0x02>;
++			sensor-index = <0x01>;
++			sensor-type = <0x08>;
++		};
++
++		ssensor@0 {
++			sensor-name = <0x01>;
++			sensor-index = <0x00>;
++			sensor-type = <0x05>;
++			parameter-number = <0x12>;
++			sensor-reg = <0x24 0x47 0x27 0x14 0x28 0x3d 0x29 0x37 0x2a 0x1f 0x40 0x0b 0x41 0x0b 0x45 0x23 0x11 0x27>;
++		};
++
++		sdsensor@0 {
++			sensor-name = <0x01>;
++			sensor-index = <0x00>;
++			sensor-type = <0x09>;
++			parameter-number = <0x12>;
++			sensor-reg = <0x24 0x47 0x27 0x14 0x28 0x3d 0x29 0x37 0x2a 0x1f 0x40 0x0b 0x41 0x0b 0x45 0x23 0x11 0x27>;
++		};
++
++		cctrsensor@0 {
++			sensor-name = <0x01>;
++			sensor-index = <0x00>;
++			sensor-type = <0x07>;
++			bus-number = <0x01>;
++			publish-sensors = <0x07>;
++			is-ch-dri = <0x00>;
++			timer-size = <0x19>;
++			fac-cali-sensor = <0x02>;
++			para-matrix = <0x01>;
++		};
++
++		pickup_detect {
++			sensor-type = <0x00>;
++			is-virtual-sensor;
++			is-need-prox = <0x01>;
++			prox-type = <0x00>;
++		};
++
++		free_fall {
++			sensor-type = <0x04>;
++			is-virtual-sensor;
++		};
++
++		lux_aod {
++			sensor-type = <0x01>;
++			is-virtual-sensor;
++			thrd-low = <0x0c>;
++			thrd-high = <0x32>;
++			als-type = <0x00>;
++		};
++
++		fp_display {
++			sensor-type = <0x03>;
++			is-virtual-sensor;
++			prox-type = <0x00>;
++		};
++	};
+ };
+ 
+ &i2c4 {
+@@ -106,13 +239,8 @@ &mdss_dsi0_phy {
+ 	status = "okay";
+ };
+ 
+-/*
+- * This firmware has no UCSI, so the pmic_glink USB-C connector never reports a
+- * data role and the role-switch would leave the controller without one. A fixed
+- * peripheral role is what the initramfs gadget needs; host mode is not used.
+- */
+-&usb_1_dwc3 {
+-	dr_mode = "peripheral";
++&sound {
++	model = "OnePlus 9";
+ };
+ 
+ &tlmm {
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonadep.dts b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonadep.dts
+index ba7c93bb9..438b98418 100644
+--- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonadep.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonadep.dts
+@@ -7,9 +7,6 @@
+ 
+ /dts-v1/;
+ 
+-#include <dt-bindings/leds/common.h>
+-#include <dt-bindings/media/video-interfaces.h>
+-#include <dt-bindings/sound/qcom,q6voice.h>
+ #include "sm8350-oneplus-common.dtsi"
+ 
+ / {
+@@ -136,154 +133,6 @@ vreg_cam_wide_dvdd: regulator-cam-wide-dvdd {
+ 		vin-supply = <&vreg_bob>;
+ 	};
+ 
+-	wcd938x: audio-codec {
+-		compatible = "qcom,wcd9380-codec";
+-
+-		pinctrl-0 = <&wcd_reset_n>;
+-		pinctrl-names = "default";
+-
+-		reset-gpios = <&tlmm 88 GPIO_ACTIVE_LOW>;
+-
+-		vdd-buck-supply = <&pm8350_s10>;
+-		vdd-rxtx-supply = <&pm8350_s10>;
+-		vdd-io-supply = <&pm8350_s10>;
+-		vdd-mic-bias-supply = <&vreg_bob>;
+-
+-		qcom,micbias1-microvolt = <1800000>;
+-		qcom,micbias2-microvolt = <2700000>;
+-		qcom,micbias3-microvolt = <1800000>;
+-		qcom,micbias4-microvolt = <1800000>;
+-		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
+-		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+-		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+-		qcom,rx-device = <&wcd_rx>;
+-		qcom,tx-device = <&wcd_tx>;
+-
+-		#sound-dai-cells = <1>;
+-	};
+-
+-	sound {
+-		compatible = "qcom,sm8250-sndcard";
+-		model = "OnePlus 9 Pro";
+-		pinctrl-0 = <&tert_mi2s_active>;
+-		pinctrl-names = "default";
+-
+-		/*
+-		 * Built-in mics are DMICs read by the TX macro, clocked by the VA
+-		 * macro and powered by WCD938x mic biases (as downstream).
+-		 */
+-		audio-routing = "TX DMIC0", "MIC BIAS3",
+-				"TX DMIC0", "VA DMIC01 CLK",
+-				"TX DMIC1", "MIC BIAS1",
+-				"TX DMIC1", "VA DMIC01 CLK",
+-				"TX DMIC2", "MIC BIAS1",
+-				"TX DMIC2", "VA DMIC23 CLK",
+-				"TX DMIC3", "MIC BIAS3",
+-				"TX DMIC3", "VA DMIC23 CLK",
+-				"TX DMIC4", "MIC BIAS4",
+-				"TX DMIC4", "VA DMIC45 CLK",
+-				"TX DMIC5", "MIC BIAS4",
+-				"TX DMIC5", "VA DMIC45 CLK",
+-				"AMIC2", "MIC BIAS2";
+-
+-		mm1-dai-link {
+-			link-name = "MultiMedia1";
+-
+-			cpu {
+-				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+-			};
+-		};
+-
+-		mm2-dai-link {
+-			link-name = "MultiMedia2";
+-
+-			cpu {
+-				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+-			};
+-		};
+-
+-		mm3-dai-link {
+-			link-name = "MultiMedia3";
+-
+-			cpu {
+-				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+-			};
+-		};
+-
+-		/* Modem voice calls, routed inside the DSP like stock "voicemmode1-call" */
+-		voicemmode1-dai-link {
+-			link-name = "VoiceMMode1";
+-
+-			cpu {
+-				sound-dai = <&q6voicedai VOICEMMODE1>;
+-			};
+-		};
+-
+-		speaker-dai-link {
+-			link-name = "Speaker Playback";
+-
+-			cpu {
+-				sound-dai = <&q6afedai TERTIARY_MI2S_RX>;
+-			};
+-
+-			platform {
+-				sound-dai = <&q6routing>;
+-			};
+-
+-			codec {
+-				sound-dai = <&speaker_top>, <&speaker_bottom>;
+-			};
+-		};
+-
+-		wcd-playback-dai-link {
+-			link-name = "WCD Playback";
+-
+-			cpu {
+-				sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
+-			};
+-
+-			codec {
+-				sound-dai = <&wcd938x 0>, <&swr1 0>, <&rxmacro 0>;
+-			};
+-
+-			platform {
+-				sound-dai = <&q6routing>;
+-			};
+-		};
+-
+-		va-dai-link {
+-			link-name = "VA Capture";
+-
+-			cpu {
+-				sound-dai = <&q6afedai VA_CODEC_DMA_TX_0>;
+-			};
+-
+-			codec {
+-				sound-dai = <&vamacro 0>;
+-			};
+-
+-			platform {
+-				sound-dai = <&q6routing>;
+-			};
+-		};
+-
+-		wcd-capture-dai-link {
+-			link-name = "WCD Capture";
+-
+-			cpu {
+-				sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
+-			};
+-
+-			codec {
+-				sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
+-			};
+-
+-			platform {
+-				sound-dai = <&q6routing>;
+-			};
+-		};
+-	};
+-
+ 	/*
+ 	 * Sensor chips and tuning for the OnePlus SLPI sensor drivers, copied
+ 	 * from the downstream oplus_sensor node; oplus-sensor-devinfo hands it
+@@ -731,42 +580,10 @@ eeprom@54 {
+ 	};
+ };
+ 
+-&i2c19 {
+-	clock-frequency = <400000>;
+-	status = "okay";
+-
+-	/* Earpiece/top speaker, plays the left I2S slot */
+-	speaker_top: audio-codec@34 {
+-		compatible = "nxp,tfa9874";
+-		reg = <0x34>;
+-		reset-gpios = <&tlmm 15 GPIO_ACTIVE_HIGH>;
+-		vdd-supply = <&pm8350_s10>;
+-		nxp,tdm-slot = <0>;
+-		sound-name-prefix = "Top";
+-		#sound-dai-cells = <0>;
+-	};
+-
+-	/* Bottom speaker, plays the right I2S slot */
+-	speaker_bottom: audio-codec@35 {
+-		compatible = "nxp,tfa9874";
+-		reg = <0x35>;
+-		reset-gpios = <&tlmm 42 GPIO_ACTIVE_HIGH>;
+-		vdd-supply = <&pm8350_s10>;
+-		nxp,tdm-slot = <1>;
+-		sound-name-prefix = "Bottom";
+-		#sound-dai-cells = <0>;
+-	};
+-};
+-
+ &mdss {
+ 	status = "okay";
+ };
+ 
+-/* DisplayPort alt mode over USB-C */
+-&mdss_dp {
+-	status = "okay";
+-};
+-
+ &mdss_dsi0 {
+ 	status = "okay";
+ };
+@@ -813,159 +630,11 @@ &mpss {
+ 	status = "okay";
+ };
+ 
+-&rxmacro {
+-	status = "okay";
+-};
+-
+-&swr1 {
+-	status = "okay";
+-
+-	wcd_rx: codec@0,4 {
+-		compatible = "sdw20217010d00";
+-		reg = <0 4>;
+-		qcom,rx-port-mapping = <1 2 3 4 5>;
+-	};
+-};
+-
+-&swr2 {
+-	status = "okay";
+-
+-	wcd_tx: codec@0,3 {
+-		compatible = "sdw20217010d00";
+-		reg = <0 3>;
+-		qcom,tx-port-mapping = <1 1 2 3>;
+-	};
+-};
+-
+-&lpass_tlmm {
+-	dmic01_active: dmic01-active-state {
+-		clk-pins {
+-			pins = "gpio6";
+-			function = "dmic1_clk";
+-			drive-strength = <8>;
+-			output-high;
+-		};
+-
+-		data-pins {
+-			pins = "gpio7";
+-			function = "dmic1_data";
+-			drive-strength = <8>;
+-		};
+-	};
+-
+-	dmic23_active: dmic23-active-state {
+-		clk-pins {
+-			pins = "gpio8";
+-			function = "dmic2_clk";
+-			drive-strength = <8>;
+-			output-high;
+-		};
+-
+-		data-pins {
+-			pins = "gpio9";
+-			function = "dmic2_data";
+-			drive-strength = <8>;
+-		};
+-	};
+-
+-	dmic45_active: dmic45-active-state {
+-		clk-pins {
+-			pins = "gpio12";
+-			function = "dmic3_clk";
+-			drive-strength = <8>;
+-			output-high;
+-		};
+-
+-		data-pins {
+-			pins = "gpio13";
+-			function = "dmic3_data";
+-			drive-strength = <8>;
+-		};
+-	};
+-};
+-
+-&txmacro {
+-	status = "okay";
+-};
+-
+-&vamacro {
+-	pinctrl-0 = <&dmic01_active>, <&dmic23_active>, <&dmic45_active>;
+-	pinctrl-names = "default";
+-	qcom,dmic-sample-rate = <600000>;
+-	status = "okay";
+-};
+-
+-/* Speaker amplifiers: tertiary MI2S, SD1 out to the amps, SD0 feedback in */
+-/*
+- * OTG VBUS comes from an external boost enabled by GPIO 8, which the
+- * OnePlus charger firmware asks for over pmic_glink.
+- */
+-&pmic_glink {
+-	oplus,fuel-gauge = <&bq27541>;
+-	oplus,otg-boost-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+-	oplus,otg-wrx-en-gpios = <&pm8350c_gpios 6 GPIO_ACTIVE_HIGH>;
+-	oplus,wireless-rx-en-gpios = <&pm8350c_gpios 2 GPIO_ACTIVE_LOW>;
+-	pinctrl-0 = <&otg_boost_default>, <&otg_wrx_en_default>;
+-	pinctrl-names = "default";
+-};
+-
+-&pm8350c_gpios {
+-	otg_wrx_en_default: otg-wrx-en-default-state {
+-		pins = "gpio6";
+-		function = "normal";
+-		power-source = <1>;
+-		bias-disable;
+-		qcom,drive-strength = <3>;
+-		output-low;
+-	};
+-};
+-
+-&q6afedai {
+-	dai@20 {
+-		reg = <TERTIARY_MI2S_RX>;
+-		qcom,sd-lines = <1>;
+-	};
++&sound {
++	model = "OnePlus 9 Pro";
+ };
+ 
+ &tlmm {
+-	otg_boost_default: otg-boost-default-state {
+-		pins = "gpio8";
+-		function = "gpio";
+-		drive-strength = <2>;
+-		bias-pull-down;
+-		output-low;
+-	};
+-
+-	tert_mi2s_active: tert-mi2s-active-state {
+-		sck-pins {
+-			pins = "gpio120";
+-			function = "mi2s2_sck";
+-			drive-strength = <8>;
+-			bias-disable;
+-		};
+-
+-		data0-pins {
+-			pins = "gpio121";
+-			function = "mi2s2_data0";
+-			drive-strength = <8>;
+-			bias-disable;
+-		};
+-
+-		ws-pins {
+-			pins = "gpio122";
+-			function = "mi2s2_ws";
+-			drive-strength = <8>;
+-			bias-disable;
+-		};
+-
+-		data1-pins {
+-			pins = "gpio124";
+-			function = "mi2s2_data1";
+-			drive-strength = <8>;
+-			bias-disable;
+-		};
+-	};
+-
+ 	cam_mclk0_active: cam-mclk0-active-state {
+ 		pins = "gpio100";
+ 		function = "cam_mclk";
+@@ -1092,13 +761,6 @@ cam_front_vana_en: cam-front-vana-en-state {
+ 		bias-disable;
+ 	};
+ 
+-	wcd_reset_n: wcd-reset-n-state {
+-		pins = "gpio88";
+-		function = "gpio";
+-		drive-strength = <16>;
+-		output-high;
+-	};
+-
+ 	tp_enable_2v8: tp-2v8-enable-state {
+ 		pins = "gpio31", "gpio197";
+ 		function = "gpio";
+@@ -1115,79 +777,8 @@ tp_rst_suspend: tp-rst-suspend-state {
+ 	};
+ };
+ 
+-/*
+- * USB role follows the Type-C port via pmic_glink UCSI on the ADSP. Default
+- * to peripheral so the USB gadget (network/serial) works before the ADSP and
+- * UCSI are up.
+- */
+-&usb_1_dwc3 {
+-	dr_mode = "otg";
+-	usb-role-switch;
+-	role-switch-default-mode = "peripheral";
+-};
+-
+-
+-/* Not populated on lemonadep (no ACK at 0x0c/0x0d); no camera uses it */
+-/* Set by WIFI_MAC in kernel/build.sh; zeros keep the firmware's placeholder */
+-&wifi {
+-	local-mac-address = [00 00 00 00 00 00];
+-};
+-
+-/* Set by BT_ADDR in kernel/build.sh; without it the adapter stays unconfigured */
+-&bluetooth {
+-	local-bd-address = [00 00 00 00 00 00];
+-};
+-
+-/* Rear flash: two channels driven together, as the stock camera does */
+-&pm8350c_flash {
+-	status = "okay";
+-
+-	led-0 {
+-		function = LED_FUNCTION_FLASH;
+-		color = <LED_COLOR_ID_WHITE>;
+-		led-sources = <1>, <2>;
+-		led-max-microamp = <400000>;
+-		flash-max-microamp = <2000000>;
+-		flash-max-timeout-us = <1280000>;
+-	};
+-};
+-
+-&i2c17 {
+-	clock-frequency = <400000>;
+-	status = "okay";
+-
+-	haptics@5a {
+-		compatible = "awinic,aw8697";
+-		reg = <0x5a>;
+-
+-		reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+-	};
+-};
+-
+ /* pm8008i L1 only feeds the telephoto sensor core (DVDD, 1.2 V) */
+ &vreg_l1i {
+ 	regulator-min-microvolt = <1200000>;
+ 	regulator-max-microvolt = <1200000>;
+ };
+-
+-&pm8008j {
+-	status = "disabled";
+-};
+-
+-&q6cvp {
+-	status = "okay";
+-};
+-
+-&q6cvs {
+-	status = "okay";
+-};
+-
+-&q6mvm {
+-	status = "okay";
+-};
+-
+-&q6voicedai {
+-	dai@1 {
+-		reg = <VOICEMMODE1>;
+-	};
+-};
+-- 
+2.56.1
+

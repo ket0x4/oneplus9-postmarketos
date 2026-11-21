@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "KPackage/GenericQML",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "OnePlus 9 Linux"
+            }
+        ],
+        "Description": "Switch the touchscreen between 360 Hz (stock's game mode) and 120 Hz",
+        "Description[tr]": "Dokunmatik ekranı 360 Hz (stok oyun modu) ile 120 Hz arasında değiştir",
+        "Icon": "input-touchpad-symbolic",
+        "Id": "org.op9.quicksetting.touchrate",
+        "License": "GPL-2.0-or-later",
+        "Name": "Touch 360 Hz",
+        "Name[tr]": "Dokunmatik 360 Hz"
+    }
+}

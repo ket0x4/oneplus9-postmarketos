@@ -1,0 +1,204 @@
+# Checks the parts of the tree the kernel build never touches: rootfs/ (shell
+# helpers, systemd units, udev rules), postmarketos/ (APKBUILDs and patches) and the
+# tools/ programs. None of this needs a cross toolchain or a phone, so it is a
+# few minutes, and it catches the class of breakage that otherwise only shows up
+# on hardware: a unit that runs a missing binary, a udev rule that does not
+# parse, a patch that no longer matches its package, a broken doc link.
+#
+# The reproducibility job is the exception: it builds the initramfs twice and
+# fails unless the two are byte-identical, which is the cheap half of "the same
+# inputs give the same artifact".
+#
+# Every check runs the same command you can run locally from the repo root:
+#   python3 .github/checks/docs-links.py
+#   python3 .github/checks/apkbuild-sums.py
+#   python3 .github/checks/apply-patches.py
+#   .github/checks/reproducible-initramfs.sh
+name: Tree checks
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SCRIPTS: |
+    initramfs/init
+    initramfs/build.sh
+    initramfs/busybox.sh
+    kernel/build.sh
+    scripts/mkboot.sh
+    scripts/op9-boot-image.sh
+    scripts/op9-nat.sh
+    firefox/build.sh
+    postmarketos/build-pmos-image.sh
+    postmarketos/apk-triggers/op9-no-splash.sh
+    rootfs/usr/local/bin/charge-status
+    rootfs/usr/local/bin/op9-addresses
+    rootfs/usr/local/bin/op9-battery-line
+    rootfs/usr/local/bin/op9-boot-successful
+    rootfs/usr/local/bin/op9-callaudio
+    rootfs/usr/local/bin/op9-desktop
+    rootfs/usr/local/bin/op9-desktop-input
+    rootfs/usr/local/bin/op9-desktop-lease
+    rootfs/usr/local/bin/op9-desktop-session
+    rootfs/usr/local/bin/op9-devcoredump
+    rootfs/usr/local/bin/op9-gadget-bind
+    rootfs/usr/local/bin/op9-kms-reset
+    rootfs/usr/local/bin/op9-lockup-watch
+    rootfs/usr/local/bin/op9-no-splash
+    rootfs/usr/local/bin/op9-sim-provision
+    rootfs/usr/local/bin/op9-sunlight-hbm
+    rootfs/usr/local/bin/rtc-offset
+    rootfs/usr/local/bin/ssc-wait
+    rootfs/usr/local/bin/steam-fex
+    rootfs/usr/local/bin/usb-gadget-ensure
+    rootfs/usr/local/bin/waydroid-stop
+    rootfs/etc/tuned/profiles/op9-balanced/script.sh
+    rootfs/etc/tuned/profiles/op9-powersave/script.sh
+    rootfs/etc/tuned/profiles/op9-performance/script.sh
+
+jobs:
+  scripts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - name: Syntax, with the interpreter each script declares
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            [ -e "$f" ] || continue
+            case "$(head -1 "$f")" in
+              *bash*) bash -n "$f" || { echo "::error file=$f::bash syntax"; fail=1; } ;;
+              *sh*)   sh   -n "$f" || { echo "::error file=$f::sh syntax"; fail=1; } ;;
+              *python3*)
+                python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])" "$f" ||
+                  { echo "::error file=$f::python syntax"; fail=1; } ;;
+              *) echo "::warning file=$f::no recognised interpreter line" ;;
+            esac
+          done <<< "$SCRIPTS"
+          exit $fail
+
+      - name: Python tools compile
+        run: |
+          python3 -m compileall -q tools .github/checks
+          find tools .github/checks -name __pycache__ -prune -exec rm -rf {} +
+
+      - name: tools/ C programs compile
+        run: |
+          # build-pmos-image.sh compiles touchboost, alert-slider and op9-slot for
+          # the phone; bringup/ holds probes that only run on hardware. Building the
+          # whole set here keeps a broken one from reaching a release.
+          fail=0
+          for src in tools/*.c tools/bringup/*.c; do
+            gcc -O2 -Wall -Wextra -c "$src" -o /tmp/"$(basename "$src" .c)".o ||
+              { echo "::error file=$src::does not compile"; fail=1; }
+          done
+          exit $fail
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends shellcheck
+          # Only files whose first line is a shell: shellcheck errors out (SC1071) on
+          # the Python helpers, and -S warning keeps notes like SC2086 on
+          # deliberately unquoted sysfs paths from failing the job.
+          shell=()
+          while IFS= read -r f; do
+            [ -e "$f" ] || continue
+            case "$(head -1 "$f")" in
+              *bash*|*'/bin/sh'*) shell+=("$f") ;;
+            esac
+          done <<< "$SCRIPTS"
+          shellcheck -S warning -x "${shell[@]}"
+
+  udev:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: Verify udev rules
+        run: |
+          # The fastrpc group comes from hexagonrpc's sysusers file on the phone, so
+          # create it here. Otherwise every rule naming it "fails" for a missing
+          # group, which masks real errors in the same file.
+          sudo groupadd --system fastrpc
+          udevadm verify rootfs/etc/udev/rules.d/*.rules
+
+  pmaports:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - name: APKBUILD metadata and checksums
+        run: python3 .github/checks/apkbuild-sums.py
+
+      - name: Patch files apply to the pinned upstream revision
+        # Static checks can't tell whether a hunk still lines up; this fetches each
+        # package's source at its pinned commit and runs the same `git apply
+        # --check` that abuild's `default_prepare` needs to succeed on the phone.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends git
+          python3 .github/checks/apply-patches.py
+
+  units:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: ExecStart binaries exist in rootfs/
+        run: |
+          # /usr/local/bin is either this repo's own scripts or a tool compiled
+          # from tools/ by postmarketos/GUIDE.md; anything else must exist in rootfs/.
+          # /usr/bin and /usr/sbin belong to Arch packages, which are not in the
+          # tree, so those are only listed here to catch an obvious typo.
+          # Strip systemd's Exec prefixes (+, -, @, !, :) before reading the path.
+          normalise() { sed -E 's/^[^=]*=//; s/^[+@!:-]+//; s/ .*//'; }
+          fail=0
+          for u in rootfs/etc/systemd/system/*.service rootfs/etc/systemd/user/*.service; do
+            [ -e "$u" ] || continue
+            while IFS= read -r bin; do
+              case "$bin" in
+                /usr/local/bin/*)
+                  [ -e "rootfs$bin" ] ||
+                  [ -e "tools/${bin##*/}.c" ] || [ -e "tools/bringup/${bin##*/}.c" ] ||
+                    { echo "::error file=$u::runs $bin, which is neither in rootfs/ nor built from tools/"; fail=1; } ;;
+                /usr/bin/*|/usr/sbin/*)
+                  grep -qx "$bin" .github/checks/system-binaries.txt ||
+                    { echo "::error file=$u::runs $bin, not in the packaged-binary allowlist"; fail=1; } ;;
+              esac
+            done < <(grep -hE '^(ExecStart|ExecStartPre|ExecStartPost|ExecStop|ExecStopPost)=/' "$u" | normalise | sort -u)
+          done
+          exit $fail
+
+  reproducible:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: Install the cross toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross bc flex libssl-dev libelf-dev \
+            cpio bzip2
+      - name: The initramfs builds identically twice
+        run: .github/checks/reproducible-initramfs.sh
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: Relative links resolve, no absolute local paths
+        run: python3 .github/checks/docs-links.py
+      - name: No credentials committed
+        run: |
+          if git grep -nIE '(\s/p:[^ ]+|BEGIN [A-Z ]*PRIVATE KEY)' |
+               grep -vE '\.patch:|LICENSE'; then
+            echo "::error::possible credential committed"
+            exit 1
+          fi

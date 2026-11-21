@@ -1,0 +1,93 @@
+# Maintainer: ibrahim yöndemli <ket0x4@pm.me>
+# The quick settings this port adds, for both the Phosh and the Plasma Mobile
+# shells:
+#
+#   touch rate      120 Hz or 360 Hz (stock only uses 360 in game mode)
+#   Natural colour  sRGB instead of the panel's wide Display P3 gamut
+#   RDP desktop     start a headless KDE Plasma desktop over RDP (port 3389)
+#
+# The Phosh plugins are shared modules built against the installed Phosh's source
+# (they use its classes), so they need a rebuild when Phosh moves. The Plasma
+# Mobile settings are QML and need no building.
+#
+# Both knobs are in sysfs, so the choice is also saved to ~/.config/op9-tuning.ini
+# and re-applied at login by op9-tuning-restore.service.
+pkgname=op9-quick-settings
+pkgver=1
+pkgrel=0
+pkgdesc="OnePlus 9 quick settings for Phosh and Plasma Mobile"
+url="https://github.com/ket0x4/oneplus9-postmarketos"
+arch="aarch64"
+license="GPL-3.0-or-later"
+depends="gtk+3.0 libhandy1 glib kconfig"
+# phosh-dev is deliberately NOT a makedepends: it is not packaged in every
+# postmarketOS image (and not at all on a Plasma-only one). The Phosh plugins
+# build only when it is installed; the Plasma settings always install.
+makedepends="meson samurai glib-dev gtk+3.0-dev libhandy1-dev"
+# Keep in step with the phosh version the plugins build against.
+_phoshver=0.59.0
+source="meson.build
+	meson_options.txt
+	op9-quick-setting.c
+	quick-setting.plugin.in
+	op9-tuning-restore
+	op9-tuning-restore.service
+	touchrate.qml
+	touchrate.metadata.json
+	naturalcolour.qml
+	naturalcolour.metadata.json
+	rdpdesktop.qml
+	rdpdesktop.metadata.json
+	phosh-$_phoshver.tar.xz::https://sources.phosh.mobi/releases/phosh/phosh-$_phoshver.tar.xz"
+
+build() {
+	# Build the Phosh plugins only when its headers are present. On a Plasma-only
+	# image this is skipped and the package is just the QML settings plus the
+	# restore service, which is the whole point of shipping both in one package.
+	if [ -e /usr/lib/pkgconfig/phosh-plugins.pc ]; then
+		mkdir -p src
+		cp meson.build meson_options.txt op9-quick-setting.c quick-setting.plugin.in src/
+		meson setup "$srcdir/build" src \
+			--prefix=/usr \
+			--buildtype=plain \
+			-D phosh_src="$srcdir/phosh-$_phoshver"
+		meson compile -C "$srcdir/build"
+	fi
+}
+
+package() {
+	if [ -d "$srcdir/build" ]; then
+		DESTDIR="$pkgdir" meson install -C "$srcdir/build"
+	else
+		echo "note: phosh-plugins not installed, so the Phosh plugins are skipped"
+	fi
+
+	# The Plasma Mobile quick settings. Each is a KPackage: a metadata.json and
+	# contents/ui/main.qml, installed under share/plasma/quicksettings/<id>/.
+	for id in touchrate naturalcolour rdpdesktop; do
+		install -Dm644 "$srcdir/$id.metadata.json" \
+			"$pkgdir/usr/share/plasma/quicksettings/org.op9.quicksetting.$id/metadata.json"
+		install -Dm644 "$srcdir/$id.qml" \
+			"$pkgdir/usr/share/plasma/quicksettings/org.op9.quicksetting.$id/contents/ui/main.qml"
+	done
+
+	install -Dm755 "$srcdir/op9-tuning-restore" "$pkgdir/usr/bin/op9-tuning-restore"
+	install -Dm644 "$srcdir/op9-tuning-restore.service" \
+		"$pkgdir/usr/lib/systemd/user/op9-tuning-restore.service"
+}
+
+sha512sums="
+e3f9ade76839b61a9b660eaf17a920b0c74ccab87d27a2a66401f06b762eaa3ce7218eeafb99f3e135ab0ebcdf3f34181e8e6a6c147ea20467c25a8fabe00b27  meson.build
+7e47ae1af6aa1ddbb1cd23d2c5f13381138d415d99aadae91ad683b5e65693d858ddef4c49fad63db3f02f30bbcdeb788d2d10168ce052fb538183ad0b3c8129  meson_options.txt
+21a96962934cf77aade7e3751cc856f5528df9d81e3277125c5d8b3766c4f57264032c383e5691d9b88acc9a5245f5f6e0666e2c7f811b39e9d343f915ff628f  op9-quick-setting.c
+a036ad08316edbeef3924b423a42488db176dcb8165c20fc6325dcbe6906e171177ee6c78585a3d1fe62e2aa32599651cbb75de06c5d2c2ed5a416d83129685b  quick-setting.plugin.in
+e4a6dcab4410df084f6ac95d834ad741adb35403d6889ee67e9610956fb2eb8fe37769e035d4cbc03a4157bfe6c328142483f421c2f67a58148e47d451fb361c  op9-tuning-restore
+59adf25dd203e853f55ae63cbe948b767c75c06d7563c278c6eecb41b41d89c7c15d92af3edaf62f94ccdbfb0c526094cb0e41a06b182648beee2193b5040f89  op9-tuning-restore.service
+4a5b9831431436b5625d563646beba89f8098e0fda38ce816a1654a38bd6f6cc2ade13f59802bb16bd4ffd5304b781e2a5836a14839b9da1c5ce7dd73431553a  touchrate.qml
+0cf6324ab6cca7f4770ee8725c9152a18e60af11850066abeb01ca6bc31d24db515675f87fb8bed6ee83b3c2df03b598a8c3cc5e46753c2dbfdef9fd2efc0470  touchrate.metadata.json
+7433cad401ef37924632c2abd8a9a72b223fbeed1ed1b45eafb0c4a5ebd44f0b291d563c6cabc8db330d173d186229ae9e2f22b3b5c8f8391de85109c57ef362  naturalcolour.qml
+a1305ec49135286d5ad5165ff38c2be038814d20123564670723480cba9c43e168a578fd4cfec2171c15593df1d38f3a60aac92646f9b00b9e6c225c87646bcf  naturalcolour.metadata.json
+f0615dfc340c5713a3e060201e8e2d216aea8adc78d7dcfbfe866515bfa46ce0630c92f98381a0143573bbd59aeb99c4d1f09cb68a4776682bf16c255445806d  rdpdesktop.qml
+fd82fd7097b1556f8c59574f911bdd2f924a81053ce78e6a0cf1a9ad9c8b4d39a59c24165e27c0dd110ee660b72b33f210744f8f61a976eedf5a96af64639ad9  rdpdesktop.metadata.json
+dbbe0149092f350c7eda01c12a4729c7b36e38ae782ed79adcf30825f8a0bf06efc3b7d40ba1d50e039427fc6ef97dd6663538882cb8e3d1ae426a0e3a9aadac  phosh-$_phoshver.tar.xz
+"

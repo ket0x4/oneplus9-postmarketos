@@ -1,0 +1,123 @@
+From 14880458d73e54c371720eb01909ebf469fdcf4e Mon Sep 17 00:00:00 2001
+From: Nex <63727521+LuCiLuna@users.noreply.github.com>
+Date: Wed, 18 Nov 2026 23:19:10 +0300
+Subject: [PATCH 153/167] arm64: dts: qcom: sm8350-oneplus-lemonade: bring the board up
+
+Describe what this phone actually reports: its own project numbers, the
+S6SY792 touchscreen with the rails its schematic uses, and the AMB655X panel
+on DSI0.
+
+The splash geometry is 1080x2400, not the 1080x2412 the 9 Pro's panel is
+driven at in its scaled mode, and the framebuffer node needs the same MMCX and
+MDSS votes and held clocks or the splash disappears once unused clock cleanup
+runs.
+---
+ .../boot/dts/qcom/sm8350-oneplus-lemonade.dts | 71 ++++++++++++++++++-
+ 1 file changed, 68 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+index 36100416a..f81e61c20 100644
+--- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
++++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
+@@ -12,16 +12,29 @@
+ / {
+ 	compatible = "oneplus,lemonade", "qcom,sm8350";
+ 	model = "OnePlus 9";
++
++	/*
++	 * Stock ABL selects the SoC DTB by msm-id (no board-id here: a board-id
++	 * makes ABL treat this as a board DTB and look for a separate SoC DTB).
++	 */
++	qcom,msm-id = <0x19f 0x20001>;
++	/*
++	 * OnePlus ABL rejects DTBs without a matching project ("oplus dtsi not
++	 * match"). 0x4d67 = 19815 is common to the 9 and 9 Pro; 0x4d71 = 19825
++	 * and 0x5176 = 20854 are this phone's own, as read from the bootloader.
++	 */
++	oplus,dtsi_no = <0x4d67 0x4d71 0x5176>;
+ };
+ 
+ &i2c4 {
+ 	touchscreen@48 {
+-		compatible = "samsung,s6sy761";
++		compatible = "samsung,s6sy792";
+ 		reg = <0x48>;
+ 		interrupts-extended = <&tlmm 23 IRQ_TYPE_LEVEL_LOW>;
++		reset-gpios = <&tlmm 22 GPIO_ACTIVE_LOW>;
+ 
+-		avdd-supply = <&pm8350c_l13>;
+-		vdd-supply = <&pm8350c_l8>;
++		avdd-supply = <&pm8350c_l8>;
++		vdd-supply = <&pm8350c_l3>;
+ 
+ 		pinctrl-0 = <&tp_rst_active>, <&tp_irq_active>, <&tp_enable_2v8>;
+ 		pinctrl-1 = <&tp_rst_suspend>, <&tp_irq_suspend>;
+@@ -29,6 +42,40 @@ touchscreen@48 {
+ 	};
+ };
+ 
++/*
++ * ABL runs the 1080x2400 panel and scans the splash from the reserved
++ * splash_region at 0xe4d00000, so the geometry is 1080 wide and 2400 tall,
++ * not the 1080x2412 the 9 Pro uses.
++ */
++&framebuffer {
++	width = <1080>;
++	height = <2400>;
++	stride = <(1080 * 4)>;
++
++	/*
++	 * BRING-UP: keep the display rail at the level the ABL splash needs;
++	 * once rpmhpd reaches sync_state, an unleveled vote lets MMCX drop and
++	 * the display pipeline stalls.
++	 */
++	power-domains = <&rpmhpd RPMHPD_MMCX>,
++			<&dispcc MDSS_GDSC>;
++	required-opps = <&rpmhpd_opp_turbo>;
++
++	/*
++	 * Hold the clocks ABL runs the splash with until msm takes over, so
++	 * MDSS runtime PM during msm probe can't switch them off under the
++	 * running command mode panel.
++	 */
++	clocks = <&gcc GCC_DISP_HF_AXI_CLK>,
++		 <&gcc GCC_DISP_SF_AXI_CLK>,
++		 <&dispcc DISP_CC_MDSS_AHB_CLK>,
++		 <&dispcc DISP_CC_MDSS_MDP_CLK>,
++		 <&dispcc DISP_CC_MDSS_MDP_LUT_CLK>,
++		 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
++		 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
++		 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>;
++};
++
+ &mpss {
+ 	pinctrl-0 = <&rf_cable_ant0_active>,
+ 		    <&rf_cable_ant1_active>,
+@@ -39,6 +86,24 @@ &mpss {
+ 	status = "okay";
+ };
+ 
++/* Samsung AMB655X, 1080x2400 DSC command mode */
++&display_panel {
++	compatible = "samsung,amb655x";
++	status = "okay";
++};
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	status = "okay";
++};
++
++&mdss_dsi0_phy {
++	status = "okay";
++};
++
+ &tlmm {
+ 	/* Modem antenna pins exclusive to lemonade */
+ 	rf_cable_ant1_active: rf-cable-ant1-active-state {
+-- 
+2.56.1
+

@@ -1,0 +1,27 @@
+# Reference: <https://postmarketos.org/deviceinfo>
+deviceinfo_format_version="0"
+deviceinfo_name="OnePlus 9"
+deviceinfo_manufacturer="OnePlus"
+deviceinfo_codename="oneplus-lemonade"
+deviceinfo_year="2021"
+deviceinfo_dtb="qcom/sm8350-oneplus-lemonade"
+deviceinfo_arch="aarch64"
+
+# Device related
+deviceinfo_chassis="handset"
+deviceinfo_keyboard="false"
+deviceinfo_external_storage="false"
+deviceinfo_screen_width="1080"
+deviceinfo_screen_height="2400"
+deviceinfo_dev_touchscreen="/dev/input/event3"
+
+# Bootloader related. ABL only accepts boot header v2 with an uncompressed Image
+# and the stock DTB blob attached; see docs/HARDWARE.md. scripts/mkboot.sh is the
+# reference for both the header version and the cmdline.
+deviceinfo_flash_method="fastboot"
+deviceinfo_kernel_cmdline="fw_devlink=permissive deferred_probe_timeout=30 fw_devlink.sync_state=timeout mem_sleep_default=s2idle console=ttyMSM0,115200n8 earlycon"
+deviceinfo_generate_bootimg="true"
+deviceinfo_bootimg_qcdt="false"
+deviceinfo_bootimg_header_version="2"
+deviceinfo_flash_pagesize="4096"
+deviceinfo_cgpt_kpart=""

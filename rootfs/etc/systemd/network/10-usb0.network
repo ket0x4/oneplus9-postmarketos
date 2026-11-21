@@ -1,0 +1,26 @@
+# USB gadget (NCM) link to the PC set up by the bring-up initramfs
+[Match]
+Name=usb0
+
+[Network]
+Address=172.16.42.1/24
+DHCPServer=yes
+# Used by systemd-resolved only, when it is the resolver; NetworkManager sets its own
+DNS=1.1.1.1
+
+# Internet via the PC, if it NATs for us (scripts/op9-nat.sh). The route exists whenever a PC is
+# attached, NAT or not, so give it a metric above anything NetworkManager adds (Wi-Fi 600,
+# mobile data 700, wired docks 100) and it only carries traffic when nothing else can.
+[Route]
+Gateway=172.16.42.2
+Metric=4000
+
+[DHCPServer]
+PoolOffset=2
+PoolSize=1
+EmitRouter=no
+EmitDNS=no
+
+[Link]
+# only there with a PC attached: its lack of carrier must not make us "offline", which stops NTP
+RequiredForOnline=no

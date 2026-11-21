@@ -1,0 +1,33 @@
+From: Antigravity <antigravity@local>
+Subject: [PATCH 166/167] usb: typec: ucsi: do not reset mux to USB-only when altmode is active
+
+On Qualcomm PMIC GLINK platforms (such as SM8350), both ucsi_glink
+(via typec_ucsi) and pmic_glink_altmode share the same usb-c-connector
+typec_mux (the QMP USB3+DP combo PHY).
+
+When a USB-C DP + USB dock is connected, UCSI reports both
+UCSI_CONSTAT_PARTNER_FLAG_USB and UCSI_CONSTAT_PARTNER_FLAG_ALT_MODE.
+Without checking PARTNER_FLAG_ALT_MODE, ucsi_handle_connector_change()
+unconditionally calls typec_set_mode(con->port, TYPEC_STATE_USB), which
+invokes qmp_combo_typec_mux_set() with alt == NULL and switches the QMP
+combo PHY from QMPPHY_MODE_USB3DP back to QMPPHY_MODE_USB3_ONLY, holding
+the DP PHY PCS block in reset and causing disp_cc_mdss_dp_link_clk to
+stay stuck at 'off' (-EBUSY).
+
+Skip forcing TYPEC_STATE_USB when PARTNER_FLAG_ALT_MODE is set so the
+altmode driver's mux configuration is preserved.
+
+diff --git a/drivers/usb/typec/ucsi/ucsi.c b/drivers/usb/typec/ucsi/ucsi.c
+index c1450639c..743c6f5f8 100644
+--- a/drivers/usb/typec/ucsi/ucsi.c
++++ b/drivers/usb/typec/ucsi/ucsi.c
+@@ -1356,7 +1356,8 @@ static void ucsi_partner_change(struct ucsi_connector *con)
+ 			typec_set_mode(con->port, TYPEC_MODE_AUDIO);
+ 			break;
+ 		default:
+-			if (UCSI_CONSTAT(con, PARTNER_FLAG_USB))
++			if (UCSI_CONSTAT(con, PARTNER_FLAG_USB) &&
++			    !UCSI_CONSTAT(con, PARTNER_FLAG_ALT_MODE))
+ 				typec_set_mode(con->port, TYPEC_STATE_USB);
+ 		}
+ 

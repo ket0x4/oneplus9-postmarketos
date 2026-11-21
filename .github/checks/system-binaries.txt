@@ -1,0 +1,8 @@
+# Binaries in rootfs/ systemd units that come from Arch Linux ARM packages, not
+# from this repository. The ones under /usr/local/bin are checked directly by
+# .github/workflows/checks.yml; these are the rest, listed so a typo in a unit's
+# ExecStart shows up as a CI failure instead of a unit that quietly fails on the
+# phone. Add a line here when a unit starts calling a new packaged program.
+/usr/bin/chvt
+/usr/bin/mmsdtng
+/usr/bin/phosh-session
