@@ -36,13 +36,14 @@ index 3f2e22ce24e..3395e5688f4 100644
  	vreg_cam_main_avdd: regulator-cam-main-avdd {
  		compatible = "regulator-fixed";
  		regulator-name = "cam_main_avdd";
-@@ -297,6 +310,15 @@ csiphy2_ep: endpoint {
+@@ -297,6 +310,16 @@ csiphy2_ep: endpoint {
  			};
  		};
  
 +		/* Telephoto camera on CSIPHY0 */
 +		port@0 {
 +			csiphy0_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 +				clock-lanes = <7>;
 +				data-lanes = <0 1>;
 +				remote-endpoint = <&ov08a10_ep>;
@@ -52,7 +53,7 @@ index 3f2e22ce24e..3395e5688f4 100644
  		/* Front camera on CSIPHY5 */
  		port@5 {
  			csiphy5_ep: endpoint {
-@@ -401,6 +423,36 @@ &cci1 {
+@@ -401,6 +423,37 @@ &cci1 {
  };
  
  &cci1_i2c0 {
@@ -79,6 +80,7 @@ index 3f2e22ce24e..3395e5688f4 100644
 +
 +		port {
 +			ov08a10_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 +				data-lanes = <1 2>;
 +				link-frequencies = /bits/ 64 <800000000>;
 +				remote-endpoint = <&csiphy0_ep>;

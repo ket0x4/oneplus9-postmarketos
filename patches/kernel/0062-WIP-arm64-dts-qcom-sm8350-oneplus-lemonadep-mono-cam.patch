@@ -37,13 +37,14 @@ index 3395e5688f4..280e9d2adf0 100644
  	vreg_cam_main_avdd: regulator-cam-main-avdd {
  		compatible = "regulator-fixed";
  		regulator-name = "cam_main_avdd";
-@@ -319,6 +332,15 @@ csiphy0_ep: endpoint {
+@@ -319,6 +332,16 @@ csiphy0_ep: endpoint {
  			};
  		};
  
 +		/* Mono camera on CSIPHY3, one lane */
 +		port@3 {
 +			csiphy3_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
 +				clock-lanes = <7>;
 +				data-lanes = <0>;
 +				remote-endpoint = <&gc02m1b_ep>;
@@ -53,7 +54,7 @@ index 3395e5688f4..280e9d2adf0 100644
  		/* Front camera on CSIPHY5 */
  		port@5 {
  			csiphy5_ep: endpoint {
-@@ -409,6 +431,35 @@ imx766_ep: endpoint {
+@@ -409,6 +431,36 @@ imx766_ep: endpoint {
  		};
  	};
  
@@ -79,6 +80,7 @@ index 3395e5688f4..280e9d2adf0 100644
 +
 +		port {
 +			gc02m1b_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
 +				data-lanes = <1>;
 +				link-frequencies = /bits/ 64 <336000000>;
 +				remote-endpoint = <&csiphy3_ep>;

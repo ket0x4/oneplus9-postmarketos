@@ -98,7 +98,7 @@ index b9229ba0b..247249fba 100644
  	/*
  	 * Sensor chips and tuning for the OnePlus SLPI sensor drivers, copied
  	 * from the downstream lemonadev oplus_sensor node; oplus-sensor-devinfo
-@@ -228,6 +301,237 @@ &display_panel {
+@@ -228,6 +301,239 @@ &display_panel {
  	status = "okay";
  };
  
@@ -133,6 +133,7 @@ index b9229ba0b..247249fba 100644
 +		/* Mono camera on CSIPHY0, one lane */
 +		port@0 {
 +			csiphy0_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
 +				clock-lanes = <7>;
 +				data-lanes = <0>;
 +				remote-endpoint = <&gc02m1b_ep>;
@@ -142,6 +143,7 @@ index b9229ba0b..247249fba 100644
 +		/* Front camera on CSIPHY5 */
 +		port@5 {
 +			csiphy5_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
 +				clock-lanes = <7>;
 +				data-lanes = <0 1 2 3>;
 +				remote-endpoint = <&imx471_ep>;
@@ -336,7 +338,7 @@ index b9229ba0b..247249fba 100644
  &mdss {
  	status = "okay";
  };
-@@ -274,6 +578,104 @@ rf_cable_ant7_active: rf-cable-ant7-active-state {
+@@ -274,6 +580,104 @@ rf_cable_ant7_active: rf-cable-ant7-active-state {
  		bias-pull-up;
  	};
  
