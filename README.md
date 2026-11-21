@@ -155,10 +155,34 @@ upstream. Review them before relying on them, and rework any you want to submit 
 
 ## Credits
 
-This builds on other people's work, and their authorship is kept in the patches:
+This builds on other people's work. Where a patch is someone else's, its authorship is kept in the
+patch's `From:` line, and the credits below say which part of the port came from where.
+
+### Prior ports of this hardware
+
+These two repositories are the reason this one exists. Neither is a fork of the other: they are
+independent efforts on the same phones, and reading them is what made this port possible.
+
+- **[LuCiLuna/oneplus9pro-arch](https://github.com/LuCiLuna/oneplus9pro-arch)**, maintained by
+  **[LuCiLuna](https://github.com/LuCiLuna)** (Nex) — the original Arch Linux ARM port of the
+  OnePlus 9 Pro, and the direct ancestor of this tree. The 167-patch series, the kernel config, the
+  initramfs, the `rootfs/` overlay, most of the `tools/` programs and the boot-image packaging come
+  from there, as does the reverse-engineering written up in [HARDWARE](docs/HARDWARE.md). This
+  repository extends that work to the OnePlus 9, moves it from Arch Linux ARM to postmarketOS, and
+  adds the reproducible build.
+
+- **[bluelightsaber/oneplus9pro-postmarketos](https://github.com/bluelightsaber/oneplus9pro-postmarketos)**,
+  maintained by **[bluelightsaber](https://github.com/bluelightsaber)** — an independent
+  postmarketOS port that runs the 9 Pro as a headless server. Coming from the other direction, it
+  arrived at the same conclusions about the ABL and U-Boot boot chain, the A/B slot flags, USB host
+  mode over a powered hub and the QCA6490/WCN6851 `ath11k` firmware; credit for that trail belongs
+  there, and its documentation is a useful second opinion on the panel, Wi-Fi and Bluetooth
+  bring-up. It is also candid about what the hardware still cannot do.
+
+### Upstream work carried in the patches
 
 - **Nia Espera** and **Caleb Connolly**, and the [sm8350-mainline](https://gitlab.com/sm8350-mainline)
-  project, for the original port.
+  project, for the original device trees and drivers.
 - **David Heidelberg** for the CAMSS C-PHY series.
 - **Vsevolod Nevorotov** for the Synaptics TouchComm driver.
 - **Stephan Gerhold**, **Richard Acayan**, **Vincent Knecht**, **Otto Pflüger**, **Bhushan Shah** and
