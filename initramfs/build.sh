@@ -30,8 +30,17 @@ chmod -R u=rwX,go=rX "$ROOT"
 chmod 755 "$ROOT/init" "$ROOT/bin/busybox" "$ROOT/bin/dmcreate"
 
 (cd "$ROOT" && find . -print0 | LC_ALL=C sort -z |
-	cpio -o -H newc --quiet --owner 0:0 --reproducible |
+	# --null is required: -print0 emits NUL-separated names, and without it cpio
+	# reads the whole list as a single filename and archives nothing but "."
+	cpio -o -H newc --quiet --null --owner 0:0 --reproducible |
 	gzip -9 -n) > "$OUTPUT"
+
+# A kernel panics if the initramfs has no /init, and an empty one is easy to
+# produce by accident, so fail here rather than at boot.
+gunzip -c "$OUTPUT" | cpio -t --quiet 2>/dev/null | grep -qxE '\.?/?init' ||
+	{ echo "initramfs: no /init in the archive" >&2; exit 1; }
+gunzip -c "$OUTPUT" | cpio -t --quiet 2>/dev/null | grep -qxE '\.?/?bin/busybox' ||
+	{ echo "initramfs: no busybox in the archive" >&2; exit 1; }
 
 echo "initramfs: $OUTPUT"
 echo "initramfs_sha256=$(sha256sum "$OUTPUT" | cut -d' ' -f1)"
