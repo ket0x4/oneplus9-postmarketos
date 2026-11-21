@@ -1,8 +1,8 @@
-From 2bdc84553e1c0c732bd5ab65ec9f93f23f9b12b2 Mon Sep 17 00:00:00 2001
+From 85eb6dac3b27b612464cf8bb1b151e6b37cd9d26 Mon Sep 17 00:00:00 2001
 From: =?UTF-8?q?ibrahim=20y=C3=B6ndemli?= <ket0x4@pm.me>
 Date: Fri, 20 Nov 2026 10:18:04 +0300
-Subject: [PATCH 160/167] arm64: dts: qcom: sm8350-oneplus-lemonade: add all
- four cameras
+Subject: [PATCH 160/167] arm64: dts: qcom: sm8350-oneplus-lemonade: add all four
+ cameras
 
 Wire the OnePlus 9 (lemonade) camera subsystem from the lemonadev stock DTBO and CamX module data:
 - IMX689 main camera on cci0_i2c0 / CSIPHY1 (C-PHY), LC898229 VCM @ 0x72, EEPROM @ 0x50
@@ -11,11 +11,11 @@ Wire the OnePlus 9 (lemonade) camera subsystem from the lemonadev stock DTBO and
 - IMX471 front camera on cci1_i2c1 / CSIPHY5, EEPROM @ 0x54
 along with the GPIO-switched fixed camera power rails and TLMM pinctrls.
 ---
- .../boot/dts/qcom/sm8350-oneplus-lemonade.dts | 402 ++++++++++++++++++
- 1 file changed, 402 insertions(+)
+ .../boot/dts/qcom/sm8350-oneplus-lemonade.dts | 405 ++++++++++++++++++
+ 1 file changed, 405 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
-index b9229ba0b..247249fba 100644
+index b9229ba0b..ee911c86a 100644
 --- a/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dts
 @@ -25,6 +25,79 @@ / {
@@ -98,7 +98,7 @@ index b9229ba0b..247249fba 100644
  	/*
  	 * Sensor chips and tuning for the OnePlus SLPI sensor drivers, copied
  	 * from the downstream lemonadev oplus_sensor node; oplus-sensor-devinfo
-@@ -228,6 +301,239 @@ &display_panel {
+@@ -228,6 +301,240 @@ &display_panel {
  	status = "okay";
  };
  
@@ -287,6 +287,7 @@ index b9229ba0b..247249fba 100644
 +
 +		port {
 +			gc02m1b_ep: endpoint {
++				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
 +				data-lanes = <1>;
 +				link-frequencies = /bits/ 64 <336000000>;
 +				remote-endpoint = <&csiphy0_ep>;
@@ -338,7 +339,7 @@ index b9229ba0b..247249fba 100644
  &mdss {
  	status = "okay";
  };
-@@ -274,6 +580,104 @@ rf_cable_ant7_active: rf-cable-ant7-active-state {
+@@ -274,6 +581,104 @@ rf_cable_ant7_active: rf-cable-ant7-active-state {
  		bias-pull-up;
  	};
  
