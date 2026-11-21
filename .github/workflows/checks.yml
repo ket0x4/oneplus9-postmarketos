@@ -197,7 +197,9 @@ jobs:
         run: python3 .github/checks/docs-links.py
       - name: No credentials committed
         run: |
-          if git grep -nIE '(\s/p:[^ ]+|BEGIN [A-Z ]*PRIVATE KEY)' |
+          # A real credential has no placeholder in it: the guide documents
+          # `/p:<password>`, which is not a secret. Exclude angle-bracket text.
+          if git grep -nIE '(\s/p:[^ <]+|BEGIN [A-Z ]*PRIVATE KEY)' |
                grep -vE '\.patch:|LICENSE'; then
             echo "::error::possible credential committed"
             exit 1
