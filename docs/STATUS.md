@@ -34,9 +34,8 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
   `op9-charge-status`, `op9-sunlight-hbm`, `op9-no-splash`, everyday mobile apps (`gnome-calls`,
   `chatty`, `gnome-contacts`, `gnome-clocks`, `gnome-calendar`, `gnome-weather`, `gnome-maps`,
   `gnome-calculator`, `iotas`, `loupe`, `showtime`, `decibels`, `gnome-text-editor`, `file-roller`,
-  `resources`, `fastfetch`), Firefox 160 (`mobile-config-firefox` 5.5.2 + patched FFmpeg 9.0.2
-  `libavcodec.so.63` / `libnoffvpx.so` in `/opt/firefox-ffmpeg/lib/` with `user.js` deployed to
-  `~/.config/mozilla/firefox/*.default-release/user.js`), and `op9-quick-settings` (built
+  `resources`, `fastfetch`), Firefox 160 with `mobile-config-firefox` 5.5.2, and
+  `op9-quick-settings` (built
   against Phosh `0.59.0`, exposing both `op9-touch-rate-quick-setting` 120/360 Hz and
   `op9-natural-colour-quick-setting` P3→sRGB toggles) all installed and running with `0` failed
   system or user units.

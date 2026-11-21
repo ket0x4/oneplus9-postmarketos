@@ -3,188 +3,120 @@
 [![Kernel build](https://github.com/ket0x4/oneplus9-postmarketos/actions/workflows/kernel.yml/badge.svg)](https://github.com/ket0x4/oneplus9-postmarketos/actions/workflows/kernel.yml)
 [![Tree checks](https://github.com/ket0x4/oneplus9-postmarketos/actions/workflows/checks.yml/badge.svg)](https://github.com/ket0x4/oneplus9-postmarketos/actions/workflows/checks.yml)
 
-Mainline Linux 7.3 on the OnePlus 9 (`lemonade`) and OnePlus 9 Pro (`lemonadep`), both Snapdragon
-888 / SM8350. No Android underneath: the kernel boots postmarketOS directly from its own initramfs.
+Mainline Linux 7.3 on the OnePlus 9 (`lemonade`) and 9 Pro (`lemonadep`), both Snapdragon 888.
+No Android underneath: the kernel boots postmarketOS from its own initramfs.
 
-One kernel image serves both phones. It carries both device trees and picks one from the project
-number the bootloader reports, and it embeds nothing phone-specific: the Wi-Fi and Bluetooth
-addresses are read from the modem at boot.
+One kernel serves both phones. It carries both device trees, picks one from the project number the
+bootloader reports, and embeds nothing phone-specific: the Wi-Fi and Bluetooth addresses are read
+from the modem at boot.
 
-This runs on real phones and is usable as a daily driver, but it is not a distribution. There is no
-installer and no prebuilt root filesystem, and installing wipes the phone.
+Usable as a daily driver, but not a distribution. There is no installer and no prebuilt root
+filesystem, and installing wipes the phone.
 
 ## Read this first
 
-- **Installing erases Android and everything on the phone.** Back up your partitions before
-  starting, especially `persist` and the EFS partitions: they are unique to your phone and cannot be
-  regenerated.
-- **You can brick your phone.** No one here can repair it for you.
+- **Installing erases Android and everything on the phone.** Back up first, especially `persist` and
+  the EFS partitions: they are unique to your phone and cannot be regenerated.
+- **You can brick your phone,** and no one here can repair it.
 - **Never write to** `xbl`, `persist`, `modem`, the EFS partitions or `param`.
-- **The install steps have never been replayed from scratch.** They are written from how these phones
-  got here, so expect to troubleshoot.
-- **One phone of each has been tested:** a T-Mobile LE2127 (9 Pro, project `2085A`) and an LE2115
-  (OnePlus 9). Other models and regional variants may differ.
+- **The install steps have never been replayed from scratch,** so expect to troubleshoot.
+- **Tested on one of each:** a T-Mobile LE2127 (9 Pro) and an LE2115 (OnePlus 9). Other variants may
+  differ.
 
 ## Status
 
-Tested with both the Phosh and the Plasma Mobile shells.
+Tested with both Phosh and Plasma Mobile.
 
-| Feature | State | Notes |
-|---|---|---|
-| Display | Works | 9 Pro: 1440x3216 and 1080x2412 up to 120 Hz. 9: 1080x2400 at 60 or 120 Hz. Sunlight boost switches on in bright light; a quick setting picks Natural (sRGB) or Vivid |
-| Touch | Works | 10 points. A quick setting raises the report rate from 120 Hz to stock's 360 Hz |
-| GPU | Works | OpenGL 4.6, ES 3.2, Vulkan 1.3 |
-| Wi-Fi | Works | Up to 6 GHz, 160 MHz, with the phone's own address read from the modem at boot |
-| Bluetooth | Works | Pairing and music tested with a headset; headset microphone untested. Bluetooth LE scanning works |
-| USB-C | Works | Device and host modes, 5 Gbps USB 3 |
-| HDMI over USB-C | Works | With a USB-C to HDMI adapter. Two USB-C docks gave USB 3 but no display |
-| Desktop mode | Partial | A display offers a full desktop, with the phone screen as a keyboard and trackpad that vibrate under your fingers. Docks and MST hubs do not work |
-| Charging | Works | USB-C PD, about 25 W, to stock's limits: stops at 100% and reports full until unplugged. Plugging in wakes the phone, and it stays awake while charging so the temperature limits keep running |
-| Wireless charging | Partial | Slow, about 2 W, tested only on another phone's reverse charging. USB takes over if both are attached |
-| Charging status | Works | The screen lights up with a buzz when charging starts; the lock screen shows type and speed |
-| Speakers and microphones | Works | A limiter and high-pass filter guard the speakers where the plugins exist. Not stock's full speaker protection, which runs in the audio DSP |
-| Earpiece | Works | The top speaker in stock's receiver profile. Loudness not yet judged by ear |
-| Sensors | Works | Accelerometer, light, proximity, compass, auto-rotate |
-| Video decoding | Works | H.264 and VP9 in hardware up to 4K60, including in Firefox. This chip has no AV1 hardware |
-| Memory and CPU scaling | Works | DDR, LLCC and L3 scale with load, and the scheduler knows which cores are fast |
-| Buttons | Works | Power, volume up, volume down |
-| Alert slider | Works | Top silent, middle vibrate, bottom ring |
-| Vibration | Works | Haptics through the shell's feedback, including keyboard ticks |
-| Flashlight | Works | Quick setting with adjustable brightness |
-| Cameras | Partial | Main, ultrawide, telephoto and front work with autofocus through libcamera's software ISP, using stock's colour matrices. The mono camera is raw only. Stock's denoise, sharpening and HDR run in the Spectra ISP, which mainline does not drive |
-| NFC | Partial | The stack detects cards. No app is included, and tap-to-pay is not possible |
-| Firefox | Works | Phone layout with mobile sites, and hardware video decoding. YouTube's mobile page clips its left edge unless zoomed to 80% |
-| Android apps | Works | Waydroid with Android 13 (LineageOS 20): GPU acceleration, internet, sound and Google Play. A Stop Android launcher shuts it down |
-| App launching | Works | No loading splash, since apps here usually open before it would be dismissed |
-| Sleep | Partial | Sleeps and wakes at about 40 to 44 mA. The chip does not reach its deepest sleep state |
-| USB-C analog headset | Partial | Routing is set up; untested without an analog adapter |
-| Mobile data | Works | LTE, IPv4 and IPv6, tested on AT&T |
-| Calls | Works | VoLTE both directions with audio through the earpiece; speaker and mute from the call screen. Headsets and Bluetooth are not routed during calls yet |
-| SMS | Works | Sending and receiving over IMS |
-| MMS | Works | Picture messages with mmsd-tng and Chatty |
-| GPS | Works | Through geoclue. A first fix takes about a minute outdoors without assistance data, and fixes stay within about 11 m of each other |
-| x86 games | Partial | Steam and Half-Life 2 run through the FEX emulator. Steam's interface is slow to start. Optional |
-| Fingerprint | Not working | Driven entirely by TrustZone secure apps. They load on mainline, but enrollment hits a boot-time secure-storage wall. See the [write-up](docs/FINGERPRINT.md) |
+**Works:** display (up to 120 Hz, sunlight boost, Natural or Vivid colour), 10-point touch with an
+optional 360 Hz report rate, GPU (Vulkan 1.3), Wi-Fi 6, Bluetooth, USB 3 device and host mode, HDMI
+over USB-C, charging to stock's limits with a charging notification, speakers, earpiece, sensors,
+H.264 and VP9 video decoding in hardware, CPU and DDR scaling, buttons, alert slider, haptics,
+flashlight, Android apps through Waydroid, mobile data, VoLTE calls, SMS, MMS and GPS.
 
-More detail, including the exact checks behind each row, is in [docs/STATUS.md](docs/STATUS.md).
+**Partial:** desktop mode (a display offers a full desktop, but docks and MST hubs do not work);
+wireless charging (about 2 W, tested only on another phone's reverse charging); cameras (all four
+work with autofocus and stock's colour matrices, but stock's denoise, sharpening and HDR run in the
+Spectra ISP, which mainline does not drive; the mono camera is raw only); NFC (cards are detected,
+there is no app and no tap-to-pay); sleep (40 to 44 mA, but not the chip's deepest state); USB-C
+analog headsets (routed, untested with an adapter); x86 games through FEX (works, slow to start).
+
+**Does not work:** the fingerprint reader. It is driven entirely by TrustZone secure apps, which load
+on mainline but hit a boot-time secure-storage wall. See the [write-up](docs/FINGERPRINT.md).
+
+[docs/STATUS.md](docs/STATUS.md) has the detail and the exact checks behind each item.
 
 ## What's here
 
 | Folder | Contents |
 |---|---|
-| [`patches/`](patches) | Everything that changes someone else's source: `kernel/` is the 167-patch Linux 7.3 series, the rest are the pmaports patches (libcamera, phoc, wlroots, ModemManager, 81voltd, hexagonrpc, iio-sensor-proxy) |
-| [`kernel/`](kernel) | The kernel config, the reproducible build script and the build manifest |
-| [`initramfs/`](initramfs) | Early boot: a USB network and rescue shell, then the switch to the root filesystem |
-| [`rootfs/`](rootfs) | udev rules, systemd units, ALSA UCM, WirePlumber and TuneD files to overlay onto a postmarketOS rootfs |
-| [`postmarketos/`](postmarketos) | The pmaports packages (both device packages and the patched libcamera, phoc, wlroots, ModemManager, 81voltd, hexagonrpc, iio-sensor-proxy and quick settings), apk triggers, the image builder, and the [install guide](postmarketos/GUIDE.md) |
-| [`firefox/`](firefox) | The FFmpeg patch and the shim that give Firefox hardware video decoding, and its settings |
-| [`scripts/`](scripts) | Packing a boot image from a release and your own `vendor_boot.img`, and USB internet sharing |
-| [`tools/`](tools) | The programs the phone runs (`touchboost`, `alert-slider`, `op9-slot`, `dmcreate`), `bringup/` probes for hardware debugging, and `generators/` for panel and sensor code |
+| [`patches/`](patches) | Everything that modifies upstream source: `kernel/` is the 167-patch Linux 7.3 series, the rest are the pmaports patches |
+| [`kernel/`](kernel) | The kernel config and a reproducible build script |
+| [`initramfs/`](initramfs) | Early boot: USB network and rescue shell, then the root filesystem |
+| [`rootfs/`](rootfs) | udev, systemd, ALSA, WirePlumber and TuneD overlay |
+| [`postmarketos/`](postmarketos) | pmaports packages, the image builder and the [install guide](postmarketos/GUIDE.md) |
+| [`scripts/`](scripts) | Packing a boot image and USB internet sharing |
+| [`tools/`](tools) | Programs for the phone, `bringup/` probes and `generators/` |
 | [`docs/`](docs) | [Status](docs/STATUS.md), [hardware notes](docs/HARDWARE.md) and the [fingerprint write-up](docs/FINGERPRINT.md) |
 
-### Not included
-
-Firmware is proprietary, so it is not here: you copy it from your own phone. So is the stock device
-tree blob the bootloader insists on, which the boot image script takes from your `vendor_boot.img`.
-Sensor calibration is specific to each phone, so that comes from your phone too.
+**Not included:** firmware, the stock device tree blob the bootloader insists on (taken from your
+`vendor_boot.img`), and sensor calibration. All three come from your own phone.
 
 ## Getting started
 
-Follow the [postmarketOS install guide](postmarketos/GUIDE.md). You need a Linux PC, an unlocked
-bootloader, and experience recovering a phone from fastboot. Building the kernel yourself also needs
-an `aarch64-linux-gnu` cross compiler; a [release](https://github.com/ket0x4/oneplus9-postmarketos/releases)
-has a prebuilt one.
+Read the [install guide](postmarketos/GUIDE.md). You need a Linux PC, an unlocked bootloader, and
+experience recovering a phone from fastboot.
 
-In short:
-
-1. Build the kernel: `kernel/build.sh work`.
-2. Have `pmbootstrap` make a Phosh or Plasma Mobile systemd image for `oneplus-lemonade` or
+1. `kernel/build.sh work` builds the kernel.
+2. Let `pmbootstrap` make a Phosh or Plasma Mobile image for `oneplus-lemonade` or
    `oneplus-lemonadep`.
-3. Run `postmarketos/build-pmos-image.sh <dir>` and the `populate-mounted-rootfs.sh` it writes, to
-   install the kernel modules, your firmware and the `rootfs/` overlay into the mounted image.
-4. Repack the boot image through `scripts/op9-boot-image.sh`, because the bootloader rejects the
-   header `pmbootstrap` writes.
-
-The guide covers each step, the `/dev/op9/userdata` layout, the patched packages and the modem
-stack.
+3. `postmarketos/build-pmos-image.sh <dir>`, then the `populate-mounted-rootfs.sh` it writes,
+   installs the modules, your firmware and the `rootfs/` overlay into the mounted image.
+4. `scripts/op9-boot-image.sh` repacks the boot image, because the bootloader rejects the header
+   `pmbootstrap` writes.
 
 ## Reproducible builds
 
-The same inputs give the same artifacts. Two builds of this kernel in different directories produce
-byte-identical `Image` files. Everything that goes into a build is pinned, and nothing reads the
-clock or the build machine's paths.
+Two builds in different directories give byte-identical `Image` files. The kernel base is pinned by
+commit rather than tag, the patch series is hashed, `SOURCE_DATE_EPOCH` comes from the base commit,
+debug info is off, and every third-party input has a checksum. `work/build/build-manifest.txt`
+records what went in, and CI builds the initramfs twice and fails if the two differ.
 
-```sh
-kernel/build.sh work                      # Image, modules, build-manifest.txt and Image.sha256
-initramfs/busybox.sh work/busybox
-initramfs/build.sh work/busybox work/initramfs.gz
-```
-
-- **The kernel base is a commit, not a tag.** `kernel/build.sh` pins Linux 7.3 by hash
-  (`c03c1a14`), so a re-tagged or deleted tag upstream cannot change what gets built. Override with
-  `KERNEL_COMMIT=`.
-- **The patch series is hashed.** The build records the sha256 of `patches/kernel/*.patch` and only
-  re-applies the series when it, or the base commit, changes. An interrupted run is redone from the
-  base rather than building a half-applied tree.
-- **The clock does not leak in.** `SOURCE_DATE_EPOCH` comes from the base commit's date and feeds
-  both `KBUILD_BUILD_TIMESTAMP` and the initramfs archive. The initramfs is built with sorted
-  entries, `cpio --reproducible` and `gzip -n`.
-- **Debug info is off** in the shipped config, which keeps `Image` at about 39 MB instead of
-  hundreds.
-- **`work/build/build-manifest.txt`** records the base commit, the patch-series hash, the config
-  hash, the timestamp and the compiler. Releases ship it and print it in their notes.
-- **Third-party inputs are pinned:** busybox 1.37.0 and FFmpeg n9.0.2 with sha256 checksums, every
-  pmaports source and patch with sha512, and the GitHub Actions by commit rather than by tag.
-
-CI builds the initramfs twice and fails if the two differ. A full `Image` rebuild is left to the
-release job, since it takes too long for every push; compare against the manifest's `Image.sha256`
-when you rebuild a release.
-
-If your source tree has local changes, `kernel/build.sh` refuses to reset it. Set
-`KERNEL_FORCE_RESET=1` to discard them deliberately.
+If your source tree has local changes, `kernel/build.sh` refuses to reset it; set
+`KERNEL_FORCE_RESET=1` to discard them.
 
 ## Contributing
 
-Reports from other models are the most useful thing anyone can send. Please open an issue with your
-model number, your firmware version, and what happened, whether it worked or not.
+Reports from other models are the most useful thing anyone can send. Open an issue with your model
+number, firmware version and what happened.
 
-## Patch quality
-
-Many patches are marked `WIP` or `HACK`. They get these phones working but are not ready for
-upstream. Review them before relying on them, and rework any you want to submit elsewhere.
+Many patches are marked `WIP` or `HACK`: they work here but are not ready for upstream. Review them
+before relying on them.
 
 ## Credits
 
-This builds on other people's work. Where a patch is someone else's, its authorship is kept in the
-patch's `From:` line, and the credits below say which part of the port came from where.
+Where a patch is someone else's, its authorship is kept in the patch's `From:` line.
 
-### Prior ports of this hardware
-
-These two repositories are the reason this one exists. Neither is a fork of the other: they are
-independent efforts on the same phones, and reading them is what made this port possible.
+**Prior ports of this hardware.** These two are why this one exists. Neither is a fork of the other:
+they are independent efforts, and reading them made this port possible.
 
 - **[LuCiLuna/oneplus9pro-arch](https://github.com/LuCiLuna/oneplus9pro-arch)**, maintained by
-  **[LuCiLuna](https://github.com/LuCiLuna)** (Nex) — the original Arch Linux ARM port of the
-  OnePlus 9 Pro, and the direct ancestor of this tree. The 167-patch series, the kernel config, the
-  initramfs, the `rootfs/` overlay, most of the `tools/` programs and the boot-image packaging come
-  from there, as does the reverse-engineering written up in [HARDWARE](docs/HARDWARE.md). This
-  repository extends that work to the OnePlus 9, moves it from Arch Linux ARM to postmarketOS, and
-  adds the reproducible build.
-
+  **[LuCiLuna](https://github.com/LuCiLuna)** (Nex) — the original Arch Linux ARM port of the 9 Pro
+  and the direct ancestor of this tree. The patch series, kernel config, initramfs, `rootfs/`
+  overlay, most of the `tools/` programs and the boot-image packaging come from there, as does the
+  reverse-engineering in [HARDWARE](docs/HARDWARE.md). This repository extends that work to the
+  OnePlus 9, moves it to postmarketOS, and adds the reproducible build.
 - **[bluelightsaber/oneplus9pro-postmarketos](https://github.com/bluelightsaber/oneplus9pro-postmarketos)**,
   maintained by **[bluelightsaber](https://github.com/bluelightsaber)** — an independent
   postmarketOS port that runs the 9 Pro as a headless server. Coming from the other direction, it
-  arrived at the same conclusions about the ABL and U-Boot boot chain, the A/B slot flags, USB host
-  mode over a powered hub and the QCA6490/WCN6851 `ath11k` firmware; credit for that trail belongs
-  there, and its documentation is a useful second opinion on the panel, Wi-Fi and Bluetooth
-  bring-up. It is also candid about what the hardware still cannot do.
+  reached the same conclusions about the boot chain, the A/B slot flags, USB host mode over a
+  powered hub and the QCA6490/WCN6851 firmware; credit for that trail belongs there.
 
-### Upstream work carried in the patches
+**Upstream work carried in the patches.**
 
 - **Nia Espera** and **Caleb Connolly**, and the [sm8350-mainline](https://gitlab.com/sm8350-mainline)
   project, for the original device trees and drivers.
-- **David Heidelberg** for the CAMSS C-PHY series.
-- **Vsevolod Nevorotov** for the Synaptics TouchComm driver.
+- **David Heidelberg** for the CAMSS C-PHY series, and **Vsevolod Nevorotov** for the Synaptics
+  TouchComm driver.
 - **Stephan Gerhold**, **Richard Acayan**, **Vincent Knecht**, **Otto Pflüger**, **Bhushan Shah** and
   **Val Packett** for the q6voice call audio series, as carried by
   [sc7280-mainline](https://gitlab.com/sc7280-mainline) for the Fairphone 5.
@@ -196,5 +128,4 @@ Much of this port was written with Claude Code (Anthropic).
 
 ## License
 
-GPL-2.0-only, matching the kernel. See [LICENSE](LICENSE). Patches for other projects are under
-those projects' licenses.
+GPL-2.0-only, matching the kernel. See [LICENSE](LICENSE).

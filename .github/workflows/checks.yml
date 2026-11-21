@@ -35,7 +35,6 @@ env:
     scripts/mkboot.sh
     scripts/op9-boot-image.sh
     scripts/op9-nat.sh
-    firefox/build.sh
     postmarketos/build-pmos-image.sh
     postmarketos/apk-triggers/op9-no-splash.sh
     rootfs/usr/local/bin/charge-status
