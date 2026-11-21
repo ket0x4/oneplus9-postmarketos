@@ -60,7 +60,9 @@ if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
 	SOURCE_DATE_EPOCH=$(git -C "$SRC" show -s --format=%ct "$BASE")
 fi
 export SOURCE_DATE_EPOCH
-export KBUILD_BUILD_TIMESTAMP="$(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S')"
+# Declared first so a failed date(1) is not masked by export, which always succeeds
+KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH" '+%Y-%m-%d %H:%M:%S')
+export KBUILD_BUILD_TIMESTAMP
 export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-op9}
 export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-op9-build}
 export KBUILD_BUILD_VERSION=${KBUILD_BUILD_VERSION:-1}
