@@ -1,25 +1,19 @@
-From 63a9cdec2a1619fe58ba253486a47750dfd6efee Mon Sep 17 00:00:00 2001
+From 9639530888b4409c17232e431c7cfd00132121b7 Mon Sep 17 00:00:00 2001
 From: Nex <63727521+LuCiLuna@users.noreply.github.com>
-Date: Sun, 1 Nov 2026 00:54:04 +0000
-Subject: [PATCH 2/3] libipa: camera_sensor_helper: add OnePlus 9 / 9 Pro sensors
+Date: Sun, 22 Nov 2026 15:35:13 +0300
+Subject: [PATCH] libipa: camera_sensor_helper: add OnePlus 9 / 9 Pro sensors
 
-Gain models and black levels for the GC02M1B, IMX471, IMX689, IMX766, IMX789
-and OV08A10. The Sony sensors use the usual 1024 / (1024 - code)
-analogue gain; the OV08A10 code is gain * 256 and the GC02M1B driver
-takes a linear gain in 1/1024.
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/ipa/libipa/camera_sensor_helper.cpp | 72 +++++++++++++++++++++++++
- 1 file changed, 72 insertions(+)
+ src/ipa/libipa/camera_sensor_helper.cpp | 60 +++++++++++++++++++++++++
+ 1 file changed, 60 insertions(+)
 
 diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
-index 9457d62..d827f42 100644
+index 359040e..644cc7f 100644
 --- a/src/ipa/libipa/camera_sensor_helper.cpp
 +++ b/src/ipa/libipa/camera_sensor_helper.cpp
-@@ -496,6 +496,18 @@ private:
+@@ -507,6 +507,18 @@ public:
  };
- REGISTER_CAMERA_SENSOR_HELPER("ar0521", CameraSensorHelperAr0521)
+ REGISTER_CAMERA_SENSOR_HELPER("gc05a2", CameraSensorHelperGc05a2)
  
 +class CameraSensorHelperGc02m1b : public CameraSensorHelper
 +{
@@ -33,29 +27,10 @@ index 9457d62..d827f42 100644
 +};
 +REGISTER_CAMERA_SENSOR_HELPER("gc02m1b", CameraSensorHelperGc02m1b)
 +
- class CameraSensorHelperGc05a2 : public CameraSensorHelper
+ class CameraSensorHelperGc08a3 : public CameraSensorHelper
  {
  public:
-@@ -632,6 +644,18 @@ class CameraSensorHelperImx462 : public CameraSensorHelperImx290
- };
- REGISTER_CAMERA_SENSOR_HELPER("imx462", CameraSensorHelperImx462)
- 
-+class CameraSensorHelperImx471 : public CameraSensorHelper
-+{
-+public:
-+	CameraSensorHelperImx471()
-+	{
-+		/* 0x40 at 10 bits. */
-+		blackLevel_ = 4096;
-+		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
-+	}
-+};
-+REGISTER_CAMERA_SENSOR_HELPER("imx471", CameraSensorHelperImx471)
-+
- class CameraSensorHelperImx477 : public CameraSensorHelper
- {
- public:
-@@ -665,6 +689,42 @@ public:
+@@ -701,6 +713,42 @@ public:
  };
  REGISTER_CAMERA_SENSOR_HELPER("imx708", CameraSensorHelperImx708)
  
@@ -98,7 +73,7 @@ index 9457d62..d827f42 100644
  class CameraSensorHelperOv01a10 : public CameraSensorHelper
  {
  public:
-@@ -677,6 +737,18 @@ public:
+@@ -713,6 +761,18 @@ public:
  };
  REGISTER_CAMERA_SENSOR_HELPER("ov01a10", CameraSensorHelperOv01a10)
  
@@ -114,6 +89,9 @@ index 9457d62..d827f42 100644
 +};
 +REGISTER_CAMERA_SENSOR_HELPER("ov08a10", CameraSensorHelperOv08a10)
 +
- class CameraSensorHelperOv08x40 : public CameraSensorHelper
+ class CameraSensorHelperOv08d10 : public CameraSensorHelper
  {
  public:
+-- 
+2.56.1
+

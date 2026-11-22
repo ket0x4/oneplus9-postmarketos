@@ -4,7 +4,7 @@
 # IMX766, IMX471, GC02M1B) and contrast-detect autofocus. Replaces Alpine's
 # libcamera so the -ipa subpackage comes from the same build.
 pkgname=libcamera
-pkgver=0.7.2
+pkgver=0.8.0
 pkgrel=0
 pkgdesc="Camera support library, with OnePlus 9 software-ISP patches"
 url="https://libcamera.org/"
@@ -24,7 +24,7 @@ subpackages="$pkgname-ipa $pkgname-tools $pkgname-dev"
 source="libcamera-$pkgver.tar.gz::https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$pkgver/libcamera-v$pkgver.tar.gz
 	0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
 	0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
-	0003-ipa-simple-add-contrast-detection-auto-focus.patch"
+	0003-ipa-softisp-add-contrast-detection-auto-focus.patch"
 builddir="$srcdir/libcamera-v$pkgver"
 
 prepare() {
@@ -40,7 +40,7 @@ build() {
 		--prefix=/usr \
 		--buildtype=plain \
 		-D pipelines=simple,uvcvideo \
-		-D ipas=simple \
+		-D ipas=softisp \
 		-D v4l2=enabled \
 		-D werror=false \
 		-D tracing=disabled \
@@ -88,8 +88,8 @@ dev() {
 }
 
 sha512sums="
-b317cdc96f61682ee0bf26dfb7c4d6441db9a9c5b93ab53528121a8cd44862b3d59cbaa3881bb0837e3e381564c184c7b742124aef4267eea754c6083de353c1  libcamera-$pkgver.tar.gz
-a11b5891d5c90ca6a09fbf5e16618e286b500a2919c0a50ea440e7cd9221ca33e850882dd433223f12487f096b53274875721f52b18d19b7915c8fc77e0c8f8a  0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
-c107b554c223a5cbcb33e2d062001d3e1e19ac5390c5cf63f03b7918d6187711e5fdc9589ba9fdfbf8a42cbcb4c8faec6aa4d558b144a3f107d190a2d33e6541  0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
-dce8dc29ecab7b89977058821d4c03b368f0f5a80b910458c41fd1f60d92cc6fe2a38bd3781a5b046c1e9009bf6f6cccd13866620c8e3d8f175ab8e3a6514923  0003-ipa-simple-add-contrast-detection-auto-focus.patch
+21ada092a1944c3476e0a254fe82d2775d2eb833d931dd051bd551a9f12ae596b3cd57f3792335d4ad86479e2247d23056d30e2631aa620897d067002c88e060  libcamera-$pkgver.tar.gz
+742cbeea8eb9939051249b1b2aa832e52d7fe0e5c5dbd7cbdfb270e94d57237023fb6ce58de39b1cdddc6f544a3b5f1fdc2cd0e9d5f71ffd37013be8b28b3236  0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
+b8f13f7fa4d3986a54a7ef9ac482d84762b5b294d96e4b958534694227b1cb5421ab32c4c70aa6c2ee5a02b3c61ab0edd33145d61a31d6b0a58875ccdf679636  0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
+84318c61d428b9e66e0ae704997c6cec4b7d67d36bbf7c38632f26cf39bc55ddbb8bb3518d5163ea2080b6ef10ec0ff2b033cc32becc9389fbca6f98a215bc12  0003-ipa-softisp-add-contrast-detection-auto-focus.patch
 "

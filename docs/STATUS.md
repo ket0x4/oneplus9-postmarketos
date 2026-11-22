@@ -92,17 +92,15 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
     I2C/VCM errors: Main **IMX689** (`3992x3000-ABGR8888`, 29.86–30.16 fps), Ultrawide **IMX766**
     (`4088x3072-ABGR8888`, 29.82–31.39 fps), Front **IMX471** (`1920x1088-ABGR8888`, 28.89–28.90
     fps), and Mono **GC02M1B** (raw `1600x1200-R10_CSI2P`, 29.37–30.22 fps).
-  - **Apps only see the cameras through libcamera 0.7.2, which PipeWire can't load.** `cam` works
-    because it links the port's `libcamera` directly. WirePlumber's libcamera monitor needs
-    `pipewire-spa-libcamera`, and Alpine builds that against `libcamera.so.0.8`; with this port's
-    0.7.2 installed, apk resolves the plugin to pmOS's riscv64 dummy (`pipewire-spa-libcamera-0-r0`)
-    and WirePlumber logs "PipeWire's libcamera SPA plugin is missing or broken", leaving the Video
-    section empty. So Snapshot and other camera apps get no camera until either the port's libcamera
-    moves to 0.8 (the three patches need rebasing; the AF patch's `src/ipa/simple` became
-    `src/ipa/softisp` and the stats macros changed) or the port ships its own
-    `pipewire-spa-libcamera` built against 0.7.2. The `WirePlumber exposes Main/Ultrawide/Front`
-    behaviour was measured on the earlier Arch build, whose `pipewire-libcamera` was built against
-    0.7.2 and therefore matched.
+  - **The port's libcamera is 0.8.0 so PipeWire can load it.** `cam` links `libcamera` directly;
+    WirePlumber's libcamera monitor goes through `pipewire-spa-libcamera`, which Alpine builds
+    against `libcamera.so.0.8`. The port used to replace the stack with 0.7.2, and apk then resolved
+    the plugin to pmOS's riscv64 dummy (`pipewire-spa-libcamera-0-r0`): WirePlumber logged
+    "PipeWire's libcamera SPA plugin is missing or broken" and its Video section stayed empty. The
+    three patches now target 0.8.0 (`src/ipa/simple` became `src/ipa/softisp`, and the stats macros
+    gained a sharpness pass), so the stock plugin loads and the cameras reach apps. `cam -l`, `cam`
+    captures and the IPA signature check were verified; the WirePlumber camera list still has to be
+    re-checked on the phone after installing the rebuilt package.
 
 - **USB-C DisplayPort / HDMI dock, USB host & KDE Plasma 6 Desktop mode**:
   - Patch `0166` (`drivers/usb/typec/ucsi/ucsi.c`) stops `ucsi_glink` / `typec_ucsi` from resetting
