@@ -84,6 +84,10 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
     subsequent captures don't inherit stale `s_stream_enabled` state.
   - Patch `0164` wires OnePlus 9 ultrawide `wide_vcm` to `asahi-kasei,ak7375` at `0x74` (matching
     stock `sunny_imx766_ak7375c` / EEPROM `0xe9`), alongside `lc898229` at `0x72` on main IMX689.
+  - Every sensor driver must load, or none appears: CAMSS's v4l2 async notifier waits for all of
+    them, so one missing module (a `modprobe.d` blacklist on `gc02m1b`, say) leaves the notifier
+    pending and registers no camera at all — empty mediatopology, "No sensor found". The
+    `op9-cameras.conf` `modules-load.d` drop-in loads them explicitly for this reason.
   - Live `cam -l` and 3-frame `cam` captures succeeded on all 4 sensors with zero kernel warnings or
     I2C/VCM errors: Main **IMX689** (`3992x3000-ABGR8888`, 29.86–30.16 fps), Ultrawide **IMX766**
     (`4088x3072-ABGR8888`, 29.82–31.39 fps), Front **IMX471** (`1920x1088-ABGR8888`, 28.89–28.90
