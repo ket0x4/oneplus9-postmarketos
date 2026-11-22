@@ -44,7 +44,7 @@ index 3395e5688f4..280e9d2adf0 100644
 +		/* Mono camera on CSIPHY3, one lane */
 +		port@3 {
 +			csiphy3_ep: endpoint {
-+				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 +				clock-lanes = <7>;
 +				data-lanes = <0>;
 +				remote-endpoint = <&gc02m1b_ep>;
@@ -80,7 +80,7 @@ index 3395e5688f4..280e9d2adf0 100644
 +
 +		port {
 +			gc02m1b_ep: endpoint {
-+				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 +				data-lanes = <1>;
 +				link-frequencies = /bits/ 64 <336000000>;
 +				remote-endpoint = <&csiphy3_ep>;

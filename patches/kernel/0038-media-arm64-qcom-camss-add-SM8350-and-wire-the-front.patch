@@ -37,7 +37,7 @@ index b92726b7949..0439531d152 100644
 +		/* Front camera on CSIPHY5 */
 +		port@5 {
 +			csiphy5_ep: endpoint {
-+				bus-type = <MEDIA_BUS_TYPE_CSI2_CPHY>;
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
 +				clock-lanes = <7>;
 +				data-lanes = <0 1 2 3>;
 +				remote-endpoint = <&imx471_ep>;
