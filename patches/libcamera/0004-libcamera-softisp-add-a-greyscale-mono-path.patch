@@ -1,0 +1,188 @@
+From 6505b782c44eebc41ea925f64eab9b8724953a3c Mon Sep 17 00:00:00 2001
+From: ibrahim yöndemli <ket0x4@pm.me>
+Date: Sun, 22 Nov 2026 16:27:22 +0300
+Subject: [PATCH 4/4] libcamera: softisp: add a greyscale path for mono sensors
+
+
+Monochrome sensors (the OnePlus 9/9 Pro's GC02M1B helper camera) only offer
+packed 10-bit greyscale, R10_CSI2P. The software ISP only knew standard Bayer
+orders, so getInputConfig() rejected it, no processed format was advertised and
+the camera was unusable by apps even though raw frames capture fine.
+
+Treat MONO CSI-2 packed 10-bit as a first-class input: there is no colour to
+interpolate, so each pixel is expanded to R=G=B. SwStatsCpu gets the matching
+statistics pass so AWB/AGC still have data to work on. The four pixels that
+share the fifth LSB byte are unpacked least-significant bits first, which
+matches what the sensor emits.
+
+Verified by decoding a raw frame from the phone (correct grey image).
+
+---
+ .../internal/software_isp/swstats_cpu.h       |  2 +
+ src/libcamera/software_isp/debayer_cpu.cpp    | 60 +++++++++++++++++++
+ src/libcamera/software_isp/debayer_cpu.h      |  4 ++
+ src/libcamera/software_isp/swstats_cpu.cpp    | 28 +++++++++
+ 4 files changed, 94 insertions(+)
+
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 143abaa..dffd9a5 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -100,6 +100,8 @@ private:
+ 	void statsBGGR10Line0(const uint8_t *src[], SwIspStats &stats, bool afLine);
+ 	/* Bayer 12 bpp unpacked */
+ 	void statsBGGR12Line0(const uint8_t *src[], SwIspStats &stats, bool afLine);
++	/* Greyscale 10 bpp packed (R10_CSI2P) */
++	void statsMono10PLine0(const uint8_t *src[], SwIspStats &stats, bool afLine);
+ 	/* Bayer 10 bpp packed */
+ 	void statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats, bool afLine);
+ 	void statsGBRG10PLine0(const uint8_t *src[], SwIspStats &stats, bool afLine);
+diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+index 91867ba..1dc436c 100644
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -193,6 +193,40 @@ DebayerCpu::~DebayerCpu() = default;
+ 		(prev[x] + curr[x - p] + curr[x + n] + next[x]) / (4 * (div)),         \
+ 		curr[x] / (div))
+ 
++template<bool addAlphaByte, bool ccmEnabled>
++void DebayerCpu::debayerMono10P_R8(uint8_t *dst, const uint8_t *src[])
++{
++	const int widthInBytes = window_.width * 5 / 4;
++	const uint8_t *curr = src[1];
++
++	/*
++	 * R10_CSI2P stores 4 pixels in 5 bytes: the first four hold the top 8
++	 * bits of each pixel's 10-bit value, the fifth the two least-significant
++	 * bits of all four, two per pixel, least-significant first. There is no
++	 * colour to interpolate, so every pixel becomes a grey value in all
++	 * three channels.
++	 */
++	for (int x = 0; x < widthInBytes; x += 5) {
++		for (unsigned int i = 0; i < 4; i++) {
++			unsigned int value = (curr[x + i] << 2) | ((curr[x + 4] >> (2 * i)) & 0x3);
++			int grey = value >> 2; /* 10 -> 8 bpp, like the bayer paths */
++
++			if constexpr (ccmEnabled) {
++				GAMMA(grey);
++				GAMMA(grey);
++				GAMMA(grey);
++			} else {
++				*dst++ = grey;
++				*dst++ = grey;
++				*dst++ = grey;
++			}
++
++			if constexpr (addAlphaByte)
++				*dst++ = 255;
++		}
++	}
++}
++
+ template<bool addAlphaByte, bool ccmEnabled>
+ void DebayerCpu::debayer8_BGBG_BGR888(uint8_t *dst, const uint8_t *src[])
+ {
+@@ -470,6 +504,21 @@ int DebayerCpu::getInputConfig(PixelFormat inputFormat, DebayerInputConfig &conf
+ 		return 0;
+ 	}
+ 
++	/*
++	 * Greyscale sensors have no colour to interpolate, so there is nothing to
++	 * debayer: each pixel is copied to all three channels. Only a single
++	 * processed format makes sense for them.
++	 */
++	if (bayerFormat.bitDepth == 10 &&
++	    bayerFormat.packing == BayerFormat::Packing::CSI2 &&
++	    bayerFormat.order == BayerFormat::MONO) {
++		config.bpp = 10;
++		config.patternSize.width = 4; /* 5 bytes per *4* pixels */
++		config.patternSize.height = 2;
++		config.outputFormats = { formats::RGB888, formats::XRGB8888 };
++		return 0;
++	}
++
+ 	LOG(Debayer, Debug)
+ 		<< "Unsupported input format " << inputFormat;
+ 	return -EINVAL;
+@@ -579,6 +628,17 @@ int DebayerCpu::setDebayerFunctions(PixelFormat inputFormat,
+ 		return 0;
+ 	}
+ 
++	if (bayerFormat.bitDepth == 10 &&
++	    bayerFormat.packing == BayerFormat::Packing::CSI2 &&
++	    bayerFormat.order == BayerFormat::MONO) {
++		/*
++		 * Greyscale has no neighbour to interpolate from, so the same
++		 * per-line function handles both lines of the pattern.
++		 */
++		SET_DEBAYER_METHODS(debayerMono10P_R8, debayerMono10P_R8)
++		return 0;
++	}
++
+ 	if (bayerFormat.bitDepth == 10 &&
+ 	    bayerFormat.packing == BayerFormat::Packing::CSI2) {
+ 		switch (bayerFormat.order) {
+diff --git a/src/libcamera/software_isp/debayer_cpu.h b/src/libcamera/software_isp/debayer_cpu.h
+index ae57089..321bd5c 100644
+--- a/src/libcamera/software_isp/debayer_cpu.h
++++ b/src/libcamera/software_isp/debayer_cpu.h
+@@ -87,6 +87,10 @@ private:
+ 	void debayer2(uint8_t *dst, const uint8_t *src[]) { (this->*debayer2_)(dst, src); }
+ 	void debayer3(uint8_t *dst, const uint8_t *src[]) { (this->*debayer3_)(dst, src); }
+ 
++	/* CSI-2 packed 10-bit greyscale (R10_CSI2P) */
++	template<bool addAlphaByte, bool ccmEnabled>
++	void debayerMono10P_R8(uint8_t *dst, const uint8_t *src[]);
++
+ 	/* 8-bit raw bayer format */
+ 	template<bool addAlphaByte, bool ccmEnabled>
+ 	void debayer8_BGBG_BGR888(uint8_t *dst, const uint8_t *src[]);
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 7882bd7..e78ca66 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -302,6 +302,28 @@ void SwStatsCpu::statsBGGR12Line0(const uint8_t *src[], SwIspStats &stats, bool
+ 	SWSTATS_FINISH_LINE_STATS()
+ }
+ 
++void SwStatsCpu::statsMono10PLine0(const uint8_t *src[], SwIspStats &stats, bool afLine)
++{
++	const uint8_t *src0 = src[1] + window_.x * 5 / 4;
++	const unsigned int widthInBytes = window_.width * 5 / 4;
++
++	SWSTATS_START_LINE_STATS(uint8_t)
++
++	for (unsigned int x = 0; x < widthInBytes; x += 5) {
++		/* Four grey pixels share the fifth byte's low bits */
++		for (unsigned int i = 0; i < 4; i++) {
++			unsigned int value = (src0[x + i] << 2) | ((src0[x + 4] >> (2 * i)) & 0x3);
++
++			r = value >> 2;
++			g = value >> 2;
++			b = value >> 2;
++			SWSTATS_ACCUMULATE_LINE_STATS(1)
++		}
++	}
++
++	SWSTATS_FINISH_LINE_STATS()
++}
++
+ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[], SwIspStats &stats, bool afLine)
+ {
+ 	const uint8_t *src0 = src[1] + window_.x * 5 / 4;
+@@ -549,6 +571,12 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg, unsigned int stat
+ 		sumShift_ = 0;
+ 		processFrame_ = &SwStatsCpu::processBayerFrame2;
+ 
++		if (bitDepth == 10 && bayerFormat.order == BayerFormat::MONO) {
++			stats0_ = &SwStatsCpu::statsMono10PLine0;
++			swapLines_ = false;
++			return 0;
++		}
++
+ 		switch (bayerFormat.order) {
+ 		case BayerFormat::BGGR:
+ 		case BayerFormat::GRBG:
+-- 
+2.56.1
+

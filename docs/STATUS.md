@@ -102,7 +102,12 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
     phone with the rebuilt 0.8.0 package: `pipewire-spa-libcamera-1.6.11-r0` installs (no dummy),
     WirePlumber lists `imx471`/`imx766`/`gc02m1b`/`imx689` as libcamera devices and exposes
     `Front Camera`, `Main Camera` and `Ultrawide Camera` as sources, and captures still produce
-    frames. The mono is disabled by `52-op9-camera.conf` as intended.
+    frames. All four cameras are exposed, including the mono (`Mono Camera`).
+  - **The mono is greyscale, so libcamera gets a greyscale path for it.** The GC02M1B only offers
+    packed 10-bit greyscale (`R10_CSI2P`), which the software ISP rejected like any non-Bayer input;
+    without patch `0004` the node is created but advertises no format, so apps see a dead source.
+    The patch expands each pixel to R=G=B and gives the statistics pass the same layout, so
+    `cam -c 3` and the PipeWire node both produce a real image.
 
 - **USB-C DisplayPort / HDMI dock, USB host & KDE Plasma 6 Desktop mode**:
   - Patch `0166` (`drivers/usb/typec/ucsi/ucsi.c`) stops `ucsi_glink` / `typec_ucsi` from resetting

@@ -24,7 +24,8 @@ subpackages="$pkgname-ipa $pkgname-tools $pkgname-dev"
 source="libcamera-$pkgver.tar.gz::https://gitlab.freedesktop.org/camera/libcamera/-/archive/v$pkgver/libcamera-v$pkgver.tar.gz
 	0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
 	0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
-	0003-ipa-softisp-add-contrast-detection-auto-focus.patch"
+	0003-ipa-softisp-add-contrast-detection-auto-focus.patch
+	0004-libcamera-softisp-add-a-greyscale-mono-path.patch"
 builddir="$srcdir/libcamera-v$pkgver"
 
 prepare() {
@@ -92,4 +93,5 @@ sha512sums="
 742cbeea8eb9939051249b1b2aa832e52d7fe0e5c5dbd7cbdfb270e94d57237023fb6ce58de39b1cdddc6f544a3b5f1fdc2cd0e9d5f71ffd37013be8b28b3236  0001-libcamera-software_isp-debayer_egl-centre-the-scaled.patch
 b8f13f7fa4d3986a54a7ef9ac482d84762b5b294d96e4b958534694227b1cb5421ab32c4c70aa6c2ee5a02b3c61ab0edd33145d61a31d6b0a58875ccdf679636  0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
 84318c61d428b9e66e0ae704997c6cec4b7d67d36bbf7c38632f26cf39bc55ddbb8bb3518d5163ea2080b6ef10ec0ff2b033cc32becc9389fbca6f98a215bc12  0003-ipa-softisp-add-contrast-detection-auto-focus.patch
+9d3b10c13c1860f4f2c1d9f3c7d39a2abf518baf81cc4951c4d6964c4adea9e258d2b3e68fcc309df3ab5585a9dc97ee82a193d0f65d3608f49cac121834d632  0004-libcamera-softisp-add-a-greyscale-mono-path.patch
 "

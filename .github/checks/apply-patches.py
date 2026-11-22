@@ -155,9 +155,13 @@ def main(packages):
                                       capture_output=True).returncode:
                 print(f"::warning file={pkgbuild}::cannot check out {ref}, using default branch")
 
+            # Apply them the way abuild's default_prepare() does: in order, on
+            # top of each other. A later patch may legitimately build on an
+            # earlier one, so checking each against the pristine tree would
+            # reject a series that works on the phone.
             for patch in patches:
                 check = subprocess.run(
-                    ["git", "-C", dest, "apply", "--check", str(patch.resolve())],
+                    ["git", "-C", dest, "apply", str(patch.resolve())],
                     capture_output=True, text=True)
                 if check.returncode:
                     print(f"::error file={patch}::does not apply to {directory.name}"
