@@ -39,6 +39,9 @@ algorithms:
                  -0.2767,  1.4086, -0.1320,
                   0.0229, -0.9277,  1.9048 ]
   - Adjust:
+      highlightKnee: 0.85
+      sharpen: 0.0
+      denoise: 0.0
   - Agc:
   - Af:
 ...

@@ -1,0 +1,470 @@
+From f25aed16a47f1c201c5203bb9443caf76f52cf4d Mon Sep 17 00:00:00 2001
+From: port <a@b.c>
+Date: Sun, 22 Nov 2026 17:32:55 +0300
+Subject: [PATCH] libcamera: softisp: add highlight rolloff and a detail pass
+
+The software ISP clipped highlights to white and did no detail processing,
+which is most of the visible gap to the stock camera. Add two tunable knobs
+to the Adjust algorithm:
+
+- highlightKnee rolls the brightest values off instead of clipping, applied
+  on the luma in the EGL shaders so the hue is kept, and in the CPU gamma
+  table for the CPU debayer.
+- sharpen and denoise drive a 3x3 edge-aware detail pass in the CPU debayer:
+  flat areas are blended towards a local blur and edges are pushed away from
+  it. The amount is chosen from the strongest channel difference so colour
+  does not fringe.
+
+Both default to off, so existing tuning files keep their old behaviour.
+---
+ .../internal/software_isp/debayer_params.h    |  13 ++
+ src/ipa/softisp/algorithms/adjust.cpp         |  15 +-
+ src/ipa/softisp/algorithms/adjust.h           |   4 +
+ src/ipa/softisp/softisp.cpp                   |   3 +
+ src/libcamera/shaders/bayer_1x_packed.frag    |  16 +-
+ src/libcamera/shaders/bayer_unpacked.frag     |  14 +-
+ src/libcamera/software_isp/debayer_cpu.cpp    | 166 +++++++++++++++++-
+ src/libcamera/software_isp/debayer_cpu.h      |   8 +
+ src/libcamera/software_isp/debayer_egl.cpp    |   8 +
+ src/libcamera/software_isp/debayer_egl.h      |   3 +
+ 10 files changed, 246 insertions(+), 4 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/debayer_params.h b/include/libcamera/internal/software_isp/debayer_params.h
+index 300c3f2..37c3092 100644
+--- a/include/libcamera/internal/software_isp/debayer_params.h
++++ b/include/libcamera/internal/software_isp/debayer_params.h
+@@ -25,6 +25,19 @@ struct DebayerParams {
+ 	RGB<double> blackLevel = RGB<double>({ 0.0, 0.0, 0.0 });
+ 	float gamma = 1.0;
+ 	float contrastExp = 1.0;
++	/*
++	 * Highlight rolloff: channel values are compressed above this knee
++	 * instead of being clipped, so detail in the brightest parts survives.
++	 * 1.0 disables the compression (the old hard-clip behaviour).
++	 */
++	float highlightKnee = 1.0f;
++	/*
++	 * Post-debayer detail processing. sharpen pulls the value away from a
++	 * local blur on edges, denoise blends it towards the blur on flat
++	 * areas. Both are 0..1-ish and 0 keeps the pass disabled.
++	 */
++	float sharpen = 0.0f;
++	float denoise = 0.0f;
+ 	RGB<double> gains = RGB<double>({ 1.0, 1.0, 1.0 });
+ 
+ 	/**
+diff --git a/src/ipa/softisp/algorithms/adjust.cpp b/src/ipa/softisp/algorithms/adjust.cpp
+index 56e2cf0..7aab74a 100644
+--- a/src/ipa/softisp/algorithms/adjust.cpp
++++ b/src/ipa/softisp/algorithms/adjust.cpp
+@@ -24,8 +24,18 @@ constexpr float kDefaultSaturation = 1.0f;
+ 
+ LOG_DEFINE_CATEGORY(IPASoftIspAdjust)
+ 
+-int Adjust::init(IPAContext &context, [[maybe_unused]] const ValueNode &tuningData)
++int Adjust::init(IPAContext &context, const ValueNode &tuningData)
+ {
++	/*
++	 * Where the highlight shoulder starts, in normalised linear range.
++	 * 1.0 keeps the historical hard clip; below that the brightest values
++	 * are compressed so they don't clip to white.
++	 */
++	highlightKnee_ = std::clamp(tuningData["highlightKnee"].get<double>(1.0),
++				    0.0, 1.0);
++	sharpen_ = std::clamp(tuningData["sharpen"].get<double>(0.0), 0.0, 2.0);
++	denoise_ = std::clamp(tuningData["denoise"].get<double>(0.0), 0.0, 1.0);
++
+ 	context.ctrlMap[&controls::Gamma] =
+ 		ControlInfo(0.1f, 10.0f, kDefaultGamma);
+ 	context.ctrlMap[&controls::Contrast] =
+@@ -109,6 +119,9 @@ void Adjust::prepare(IPAContext &context,
+ 	params->gamma = 1.0 / context.activeState.knobs.gamma;
+ 	const float contrast = context.activeState.knobs.contrast.value_or(kDefaultContrast);
+ 	params->contrastExp = tan(std::clamp(contrast * M_PI_4, 0.0, M_PI_2 - 0.00001));
++	params->highlightKnee = highlightKnee_;
++	params->sharpen = sharpen_;
++	params->denoise = denoise_;
+ }
+ 
+ void Adjust::process([[maybe_unused]] IPAContext &context,
+diff --git a/src/ipa/softisp/algorithms/adjust.h b/src/ipa/softisp/algorithms/adjust.h
+index 1acf7cd..7b6477c 100644
+--- a/src/ipa/softisp/algorithms/adjust.h
++++ b/src/ipa/softisp/algorithms/adjust.h
+@@ -43,6 +43,10 @@ public:
+ 
+ private:
+ 	void applySaturation(Matrix<float, 3, 3> &ccm, float saturation);
++
++	float highlightKnee_ = 1.0f;
++	float sharpen_ = 0.0f;
++	float denoise_ = 0.0f;
+ };
+ 
+ } /* namespace ipa::softisp::algorithms */
+diff --git a/src/ipa/softisp/softisp.cpp b/src/ipa/softisp/softisp.cpp
+index c262313..c24abbc 100644
+--- a/src/ipa/softisp/softisp.cpp
++++ b/src/ipa/softisp/softisp.cpp
+@@ -166,6 +166,9 @@ int IPASoftIsp::init(const IPASettings &settings,
+ 		params_->blackLevel = { { 0.0, 0.0, 0.0 } };
+ 		params_->gamma = 1.0 / algorithms::kDefaultGamma;
+ 		params_->contrastExp = 1.0;
++		params_->highlightKnee = 1.0f;
++		params_->sharpen = 0.0f;
++		params_->denoise = 0.0f;
+ 		params_->gains = { { 1.0, 1.0, 1.0 } };
+ 		params_->lscLutVersion = 0;
+ 		params_->lscLut = DebayerParams::identityLscLut;
+diff --git a/src/libcamera/shaders/bayer_1x_packed.frag b/src/libcamera/shaders/bayer_1x_packed.frag
+index e613340..76b51ac 100644
+--- a/src/libcamera/shaders/bayer_1x_packed.frag
++++ b/src/libcamera/shaders/bayer_1x_packed.frag
+@@ -70,6 +70,7 @@ uniform mat3 ccm;
+ uniform vec3 blacklevel;
+ uniform float gamma;
+ uniform float contrastExp;
++uniform float highlightKnee;
+ 
+ #if defined(APPLY_LSC)
+ uniform sampler2D lsc_tex;
+@@ -248,7 +249,20 @@ void main(void)
+ 	rgb = clamp(rgb * awb, vec3(0.0), vec3(1.0));
+ 
+ 	/* Colour Correction Matrix */
+-	rgb = ccm * rgb;
++	rgb = max(ccm * rgb, vec3(0.0));
++
++	/*
++	 * Highlight rolloff. Compress the brightest values above the knee on
++	 * the luma so the colour ratios (and thus the hue) stay put, instead of
++	 * letting them clip hard to white.
++	 */
++	float luma = max(rgb.r, max(rgb.g, rgb.b));
++	if (highlightKnee < 1.0 && luma > highlightKnee) {
++		float compressed = highlightKnee +
++			(1.0 - highlightKnee) *
++			(1.0 - exp(-(luma - highlightKnee) / (1.0 - highlightKnee)));
++		rgb *= compressed / luma;
++	}
+ 
+ 	/*
+ 	 * Contrast
+diff --git a/src/libcamera/shaders/bayer_unpacked.frag b/src/libcamera/shaders/bayer_unpacked.frag
+index be2f89d..36b553b 100644
+--- a/src/libcamera/shaders/bayer_unpacked.frag
++++ b/src/libcamera/shaders/bayer_unpacked.frag
+@@ -29,6 +29,7 @@ uniform mat3            ccm;
+ uniform vec3            blacklevel;
+ uniform float           gamma;
+ uniform float           contrastExp;
++uniform float           highlightKnee;
+ 
+ #if defined(APPLY_LSC)
+ uniform sampler2D lsc_tex;
+@@ -148,7 +149,18 @@ void main(void) {
+     rgb = clamp(rgb * awb, vec3(0.0), vec3(1.0));
+ 
+     /* Colour Correction Matrix */
+-    rgb = ccm * rgb;
++    rgb = max(ccm * rgb, vec3(0.0));
++
++    /*
++     * Highlight rolloff, applied on the luma to keep the hue.
++     */
++    float luma = max(rgb.r, max(rgb.g, rgb.b));
++    if (highlightKnee < 1.0 && luma > highlightKnee) {
++        float compressed = highlightKnee +
++            (1.0 - highlightKnee) *
++            (1.0 - exp(-(luma - highlightKnee) / (1.0 - highlightKnee)));
++        rgb *= compressed / luma;
++    }
+ 
+     /*
+      * Contrast
+diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+index 1dc436c..e381771 100644
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -12,7 +12,11 @@
+ #include "debayer_cpu.h"
+ 
+ #include <algorithm>
++#include <cmath>
++#include <cstring>
+ #include <stdlib.h>
++#include <thread>
++#include <vector>
+ #include <sys/ioctl.h>
+ #include <utility>
+ 
+@@ -735,6 +739,14 @@ int DebayerCpu::configure(const StreamConfiguration &inputCfg,
+ 
+ 	ccmEnabled_ = ccmEnabled;
+ 
++	const PixelFormatInfo &outInfo = PixelFormatInfo::info(outputCfg.pixelFormat);
++	postBpp_ = outInfo.bitsPerPixel / 8;
++	postWidth_ = outputCfg.size.width;
++	postHeight_ = outputCfg.size.height;
++	postStride_ = outputConfig_.stride;
++	if (postBpp_ == 0 || postWidth_ * postBpp_ > postStride_)
++		postBpp_ = 0;
++
+ 	/*
+ 	 * Lookup tables must be initialized because the initial value is used for
+ 	 * the first two frames, i.e. until stats processing starts providing its
+@@ -1022,10 +1034,19 @@ void DebayerCpu::updateGammaTable(const DebayerParams &params)
+ {
+ 	const float gamma = params.gamma;
+ 	const float contrastExp = params.contrastExp;
++	const float knee = std::clamp(params.highlightKnee, 0.0f, 1.0f);
+ 
+ 	const float divisor = gammaTable_.size() - 1.0;
+ 	for (auto [i, value] : utils::enumerate(gammaTable_)) {
+ 		float normalized = i / divisor;
++		/*
++		 * Roll highlights off above the knee instead of letting them
++		 * clip, so the brightest areas keep some gradation.
++		 */
++		if (knee < 1.0f && normalized > knee) {
++			const float over = (normalized - knee) / (1.0f - knee);
++			normalized = knee + (1.0f - knee) * (1.0f - std::exp(-over));
++		}
+ 		/* Convert 0..2 to 0..infinity; avoid actual inifinity at tan(pi/2) */
+ 		/* Apply simple S-curve */
+ 		if (normalized < 0.5)
+@@ -1041,7 +1062,8 @@ void DebayerCpu::updateLookupTables(const DebayerParams &params)
+ 	const bool gammaUpdateNeeded =
+ 		params.gamma != params_.gamma ||
+ 		params.blackLevel != params_.blackLevel ||
+-		params.contrastExp != params_.contrastExp;
++		params.contrastExp != params_.contrastExp ||
++		params.highlightKnee != params_.highlightKnee;
+ 	if (gammaUpdateNeeded)
+ 		updateGammaTable(params);
+ 
+@@ -1106,6 +1128,146 @@ void DebayerCpu::updateLookupTables(const DebayerParams &params)
+ 	params_ = params;
+ }
+ 
++/*
++ * A detail pass over the debayered output: an edge-preserving denoise followed
++ * by an unsharp mask.
++ *
++ * The denoise weights each neighbour of a 3x3 window by how similar its luma
++ * is to the centre, so flat (noisy) areas are averaged while real edges keep
++ * their neighbours at arm's length. The unsharp then works on the denoised
++ * result, so it sharpens real detail instead of amplifying the noise that was
++ * just removed. The luma is the mean of the stored channels, which makes this
++ * independent of the RGB/BGR byte order (a constant alpha or X byte drops out
++ * of the difference).
++ */
++void DebayerCpu::postProcess(uint8_t *data)
++{
++	const float sharpen = params_.sharpen;
++	const float denoise = params_.denoise;
++
++	if ((sharpen <= 0.0f && denoise <= 0.0f) || postBpp_ == 0 ||
++	    postWidth_ < 3 || postHeight_ < 3)
++		return;
++
++	const unsigned int w = postWidth_;
++	const unsigned int h = postHeight_;
++	const unsigned int stride = postStride_;
++	const unsigned int bpp = postBpp_;
++	const size_t bytes = static_cast<size_t>(stride) * h;
++
++	postSrc_.resize(bytes);
++	memcpy(postSrc_.data(), data, bytes);
++	const uint8_t *src = postSrc_.data();
++
++	auto parallelRows = [&](auto &&fn) {
++		const unsigned int nThreads = std::clamp<unsigned int>(threads_.size(), 1, 8);
++		if (nThreads == 1) {
++			fn(0, h);
++			return;
++		}
++
++		std::vector<std::thread> workers;
++		workers.reserve(nThreads);
++		for (unsigned int i = 0; i < nThreads; i++)
++			workers.emplace_back(fn, h * i / nThreads, h * (i + 1) / nThreads);
++		for (auto &worker : workers)
++			worker.join();
++	};
++
++	if (denoise > 0.0f) {
++		postDen_.resize(bytes);
++		uint8_t *den = postDen_.data();
++
++		parallelRows([&](unsigned int yStart, unsigned int yEnd) {
++			/* Luma difference at which a neighbour stops counting. */
++			constexpr float kSigma = 16.0f;
++			constexpr float kWeight = 1.0f / (kSigma * kSigma);
++
++			for (unsigned int y = yStart; y < yEnd; y++) {
++				const unsigned int ym = y ? y - 1 : 0;
++				const unsigned int yp = y < h - 1 ? y + 1 : h - 1;
++				const uint8_t *r0 = src + ym * stride;
++				const uint8_t *r1 = src + y * stride;
++				const uint8_t *r2 = src + yp * stride;
++				uint8_t *dst = den + y * stride;
++
++				for (unsigned int x = 0; x < w; x++) {
++					const unsigned int xm = x ? x - 1 : 0;
++					const unsigned int xp = x < w - 1 ? x + 1 : w - 1;
++					const uint8_t *e = &r1[x * bpp];
++					const uint8_t *n[9] = {
++						&r0[xm * bpp], &r0[x * bpp], &r0[xp * bpp],
++						&r1[xm * bpp], &r1[x * bpp], &r1[xp * bpp],
++						&r2[xm * bpp], &r2[x * bpp], &r2[xp * bpp],
++					};
++
++					float centreLuma = 0.0f;
++					for (unsigned int ch = 0; ch < bpp; ch++)
++						centreLuma += e[ch];
++					centreLuma /= bpp;
++
++					float sum[4] = {}, weightSum = 0.0f;
++					for (unsigned int k = 0; k < 9; k++) {
++						float luma = 0.0f;
++						for (unsigned int ch = 0; ch < bpp; ch++)
++							luma += n[k][ch];
++						luma /= bpp;
++
++						const float d = luma - centreLuma;
++						const float weight = 1.0f / (1.0f + d * d * kWeight);
++
++						for (unsigned int ch = 0; ch < bpp; ch++)
++							sum[ch] += weight * n[k][ch];
++						weightSum += weight;
++					}
++
++					for (unsigned int ch = 0; ch < bpp; ch++) {
++						const float blurred = sum[ch] / weightSum;
++						const float v = e[ch] * (1.0f - denoise) +
++								blurred * denoise;
++						dst[x * bpp + ch] = static_cast<uint8_t>(
++							std::clamp(v, 0.0f, 255.0f));
++					}
++				}
++			}
++		});
++
++		src = den;
++	}
++
++	if (sharpen > 0.0f) {
++		parallelRows([&](unsigned int yStart, unsigned int yEnd) {
++			for (unsigned int y = yStart; y < yEnd; y++) {
++				const unsigned int ym = y ? y - 1 : 0;
++				const unsigned int yp = y < h - 1 ? y + 1 : h - 1;
++				const uint8_t *r0 = src + ym * stride;
++				const uint8_t *r1 = src + y * stride;
++				const uint8_t *r2 = src + yp * stride;
++				uint8_t *dst = data + y * stride;
++
++				for (unsigned int x = 0; x < w; x++) {
++					const unsigned int xm = x ? x - 1 : 0;
++					const unsigned int xp = x < w - 1 ? x + 1 : w - 1;
++					const uint8_t *a = &r0[xm * bpp], *b = &r0[x * bpp], *c = &r0[xp * bpp];
++					const uint8_t *d = &r1[xm * bpp], *e = &r1[x * bpp], *f = &r1[xp * bpp];
++					const uint8_t *g = &r2[xm * bpp], *q = &r2[x * bpp], *i = &r2[xp * bpp];
++
++					for (unsigned int ch = 0; ch < bpp; ch++) {
++						const float blur = (a[ch] + 2 * b[ch] + c[ch] +
++								    2 * (d[ch] + 2 * e[ch] + f[ch]) +
++								    g[ch] + 2 * q[ch] + i[ch]) / 16.0f;
++						const float v = e[ch] + sharpen * (e[ch] - blur);
++						dst[x * bpp + ch] = static_cast<uint8_t>(
++							std::clamp(v, 0.0f, 255.0f));
++					}
++				}
++			}
++		});
++	} else {
++		memcpy(data, src, bytes);
++	}
++}
++
+ void DebayerCpu::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output, const DebayerParams &params)
+ {
+ 	bench_.startFrame();
+@@ -1148,6 +1310,8 @@ void DebayerCpu::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 		});
+ 	}
+ 
++	postProcess(out.planes()[0].data());
++
+ 	metadata.planes()[0].bytesused = out.planes()[0].size();
+ 
+ 	dmaSyncers.clear();
+diff --git a/src/libcamera/software_isp/debayer_cpu.h b/src/libcamera/software_isp/debayer_cpu.h
+index 321bd5c..480b2cc 100644
+--- a/src/libcamera/software_isp/debayer_cpu.h
++++ b/src/libcamera/software_isp/debayer_cpu.h
+@@ -132,6 +132,14 @@ private:
+ 				bool ccmEnabled);
+ 	void updateGammaTable(const DebayerParams &params);
+ 	void updateLookupTables(const DebayerParams &params);
++	void postProcess(uint8_t *data);
++
++	std::vector<uint8_t> postSrc_;
++	std::vector<uint8_t> postDen_;
++	unsigned int postWidth_ = 0;
++	unsigned int postHeight_ = 0;
++	unsigned int postStride_ = 0;
++	unsigned int postBpp_ = 0;
+ 
+ 	static constexpr unsigned int kRGBLookupSize = 256;
+ 	static constexpr unsigned int kGammaLookupSize = 1024;
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 99928a4..90a5041 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -108,6 +108,7 @@ int DebayerEGL::getShaderVariableLocations(void)
+ 	blackLevelUniformDataIn_ = glGetUniformLocation(programId_, "blacklevel");
+ 	gammaUniformDataIn_ = glGetUniformLocation(programId_, "gamma");
+ 	contrastExpUniformDataIn_ = glGetUniformLocation(programId_, "contrastExp");
++	highlightKneeUniformDataIn_ = glGetUniformLocation(programId_, "highlightKnee");
+ 
+ 	textureUniformStep_ = glGetUniformLocation(programId_, "tex_step");
+ 	textureUniformSize_ = glGetUniformLocation(programId_, "tex_size");
+@@ -124,6 +125,7 @@ int DebayerEGL::getShaderVariableLocations(void)
+ 			    << " blacklevel " << blackLevelUniformDataIn_
+ 			    << " gamma " << gammaUniformDataIn_
+ 			    << " contrastExp " << contrastExpUniformDataIn_
++			    << " highlightKnee " << highlightKneeUniformDataIn_
+ 			    << " tex_step " << textureUniformStep_
+ 			    << " tex_size " << textureUniformSize_
+ 			    << " stride_factor " << textureUniformStrideFactor_
+@@ -518,6 +520,12 @@ void DebayerEGL::setShaderVariableValues(eGLImage &eglImageIn, const DebayerPara
+ 	glUniform1f(contrastExpUniformDataIn_, params.contrastExp);
+ 	LOG(Debayer, Debug) << " contrastExpUniformDataIn_ " << contrastExpUniformDataIn_ << " data " << params.contrastExp;
+ 
++	/*
++	 * Highlight rolloff
++	 */
++	glUniform1f(highlightKneeUniformDataIn_, params.highlightKnee);
++	LOG(Debayer, Debug) << " highlightKneeUniformDataIn_ " << highlightKneeUniformDataIn_ << " data " << params.highlightKnee;
++
+ 	return;
+ }
+ 
+diff --git a/src/libcamera/software_isp/debayer_egl.h b/src/libcamera/software_isp/debayer_egl.h
+index cbbc6a4..b3c6c48 100644
+--- a/src/libcamera/software_isp/debayer_egl.h
++++ b/src/libcamera/software_isp/debayer_egl.h
+@@ -119,6 +119,9 @@ private:
+ 	/* Contrast */
+ 	GLint contrastExpUniformDataIn_;
+ 
++	/* Highlight rolloff */
++	GLint highlightKneeUniformDataIn_;
++
+ 	Size nativeOutputSize_;
+ 	Rectangle window_;
+ 	std::unique_ptr<SwStatsCpu> stats_;
+-- 
+2.56.1
+

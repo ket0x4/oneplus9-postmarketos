@@ -114,6 +114,17 @@ ID registers after the first boot. If touch does not probe, check these two supp
   `cc13` colour matrices are 56-byte entries: colour-temperature start and end (float32), the 3x3
   matrix (float32, rows R, G, B) and three offsets. The libcamera tuning files in `rootfs/` use the
   normal-light set of each sensor.
+- **Lens shading and AWB from the same blobs:** the software ISP supports lens shading correction
+  and the Bayesian AWB, but both need the per-module tables, which are not in this repository.
+  `tools/generators/chromatix-tune.py` lists the nodes of a tuning blob (`--list`), dumps one
+  (`--dump <name>`), and turns a lens-shading mesh into a libcamera `Lsc` block
+  (`--lsc <name> --grid 17 --ct <kelvin>`). The soft ISP stores LSC as UQ<2, 6> register values
+  (64 = 1.0), which the tool emits; check the range with `--scale`/`--dump` first, and note the
+  node's channel order may not be r/g/b. The Bayes AWB needs a `colourGains` curve (colour
+  temperature to red/blue gains), `priors` (lux to a CT probability curve),
+  `transversePos`/`transverseNeg` and an `AwbMode` block; the keys are in
+  `src/ipa/libipa/awb_bayes.cpp`. Run the tool on the phone's `com.qti.tuned.*.bin` files and
+  keep the output beside the tuning YAMLs.
 - **Panel:** the AMB670YF01 has Display P3 primaries, and stock does its colour modes in the
   display engine (its panel colour-mode commands are empty). High-brightness mode is `0x53 = 0xe0`
   with brightness 3538-4095; stock leaves panel revisions (ID2, DCS `0xdb`) below 3 out of it.

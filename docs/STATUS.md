@@ -108,6 +108,45 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
     without patch `0004` the node is created but advertises no format, so apps see a dead source.
     The patch expands each pixel to R=G=B and gives the statistics pass the same layout, so
     `cam -c 3` and the PipeWire node both produce a real image.
+  - **The software ISP now has a tunable detail pass.** Patch `0005` adds three `Adjust` knobs to
+    each tuning file: `highlightKnee` (roll highlights off above this normalised level instead of
+    clipping them to white), `denoise` (an edge-preserving 3x3 bilateral pass) and `sharpen` (an
+    unsharp mask run on the denoised result). The port sets `highlightKnee: 0.85`, but leaves
+    `denoise`/`sharpen` at **0**: the pass runs on the CPU over the whole frame, and at 12 MP it
+    costs about 3.5 s per frame (0.38 fps), which is unusable for preview. Even if it is moved to
+    the GPU it needs a cheaper implementation; enabling it is only sensible for a one-off still
+    capture. The shared `Debayer` base applies it in both the CPU and EGL paths (the EGL output is
+    CPU-filtered after `glFinish` through a DMA sync).
+  - **The EGL/GPU debayer is now built and enabled.** Patch `0006` makes the packed shader rebuild
+    the full 10/12-bit sample from the packed low-bits byte (the old code read only the most
+    significant byte), adds a monochrome `R10_CSI2P` path so the GC02M1B survives the switch, and
+    moves the detail pass to the shared base class. The APKBUILD gains `mesa-dev` and
+    `-Dsoftisp-gpu=enabled`, so libcamera builds `debayer_egl.cpp`; at runtime WirePlumber's
+    libcamera source uses it when surfaceless EGL works and logs a fallback to the CPU path
+    otherwise. The CPU debayer is still bilinear; the better demosaic is GPU-only for now.
+    **But the port ships a WirePlumber drop-in (`rootfs/etc/systemd/user/
+    wireplumber.service.d/10-op9-cpu-isp.conf`) that forces `LIBCAMERA_SOFTISP_MODE=cpu`:**
+    with EGL, WirePlumber creates the camera node but the client's stream fails with "target
+    not found" for the 2000x1128 stream the camera apps negotiate, while `cam` at 4000x3000 works.
+    The CPU path streams correctly, so it is the default until the EGL/SPA combination is fixed.
+    `cam` and still tools can still opt into GPU per process.
+  - **The GPU demosaic is Malvar-He-Cutler.** Patch `0007` replaces the bilinear interpolation in
+    the packed shader with the 5x5 gradient-corrected linear filter (Laplacian correction from the
+    sampled to the missing channel), following the IPOL reference including its border handling.
+    The shader was rendered with Mesa against an independent Python port on synthetic RGGB/BGGR/
+    GRBG/GBRG images and matched within 1/255 for all four phases.
+  - **Burst HDR/night stills: `tools/op9-hdr.c`.** The software ISP sees one frame, so it cannot do
+    what stock's night mode does. This tool takes a burst of raw Bayer frames at different exposures
+    (capture the CAMSS raw video node, e.g. with `v4l2-ctl --stream-mmap --stream-count=N
+    --stream-to=frame.raw` and change `exposure` between captures), aligns them to even pixel
+    offsets (keeping the CFA phase), merges with a saturation/SNR weighting so clipped highlights
+    come from the short exposure and shadows from the long one, demosaics with Malvar-He-Cutler,
+    applies white balance and a Reinhard shoulder, and writes a PPM:
+    `op9-hdr --width 4000 --height 3000 --stride 5000 --pattern RGGB --ev 1,0.25,0.0625 out.ppm f0.raw f1.raw f2.raw`.
+    Verified on synthetic shifted/exposure-bracketed bursts: the merge matches an independent
+    reference exactly (0/255) and a bright region that clips at 255 in a single long exposure comes
+    out around 182. It is not a GUI camera app; it is the processing half, to pair with a capture
+    front-end later.
 
 - **USB-C DisplayPort / HDMI dock, USB host & KDE Plasma 6 Desktop mode**:
   - Patch `0166` (`drivers/usb/typec/ucsi/ucsi.c`) stops `ucsi_glink` / `typec_ucsi` from resetting
@@ -288,12 +327,42 @@ and a faint ripple every 3 mm a finger travels on the trackpad.
 - The panel is a DRM lease: GNOME's `monitors.xml` and `gdctl` offer it for lease, and
   `op9-desktop-lease` takes the lease over Wayland (`wp_drm_lease_v1`) and hands its file descriptor
   to `op9-desktop-input`. It hands it over again if the daemon restarts.
-- Phosh and GNOME share the user's settings, so desktop mode keeps its own on-screen keyboard and
-  window-button settings: each side saves the other's values when it starts. Otherwise GNOME pops
-  up a keyboard on the TV for every text field, or Phosh's keyboard stays hidden.
+- Phosh and GNOME share the user's settings, so desktop mode puts GNOME's on-screen keyboard and
+  window-button values in place when it starts. Nothing is saved back: Phosh's docked manager
+  rewrites both on every start (`docked-manager.c` calls `set_enabled(FALSE)` while the device
+  isn't docked), so the phone side always comes back by itself. Otherwise GNOME pops up a keyboard
+  on the TV for every text field, or Phosh's keyboard stays hidden.
+- Phosh's own docked mode is not an alternative to this: it needs a pointing device as well as an
+  external display (`PHOSH_MODE_DOCKED_PHONE_MASK`), keeps phoc and the Phosh shell, and only
+  flips the same four settings plus `sm.puri.phoc auto-maximize`. With the phone as the
+  keyboard/trackpad it never triggers.
 - Patch 0145 makes the haptics driver play each effect at its strength; before it, every vibration
   was the same.
 
+- The image needs the desktop shell on top of Phosh: `gnome-shell`, `gnome-shell-session`, `mutter`
+  (which also provides `gdctl`) and `gdm`. `postmarketos-ui-phosh` ships Phosh only and excludes the
+  `-mobile` GNOME variants, so nothing pulls them. Without `gnome-shell` the chooser still appears but
+  starting desktop mode leaves no shell; `gnome-shell` also imports the `Gdm` typelib and the
+  `org.gnome.login-screen` schema, so `gdm` is required even though greetd, not GDM, is the display
+  manager. Installing `gdm` pulls `gdm-systemd`, whose preset wants `gdm.service` as
+  `display-manager.service`; the existing greetd symlink makes apk refuse that, so Phosh stays.
+- `py3-cairo` is what `op9-desktop-input` draws the keyboard and trackpad with. Without it the
+  daemon still leases the panel and the phone screen stays dark.
+- On images that run Phosh under greetd/phrog rather than a `phosh.service`, `op9-desktop.service`
+  has to stop greetd itself (`Conflicts=greetd.service`) and `op9-desktop-session` must ignore
+  `SIGHUP`: the greetd session worker hangs tty7 up when the old session ends, which would kill
+  the session script before GNOME starts. Both sessions also share one user manager and its
+  `gnome-session-pre.target`, so the script waits for the old session's targets and jobs to drain
+  first; starting GNOME earlier aborts `gnome-session-init-worker` with a destructive transaction
+  and leaves no compositor on either screen.
+- Coming back is the same race in reverse, and `greetd` cannot be restarted for it: its
+  `initial_session` only runs at boot, so a restart shows the login greeter instead of the
+  session the user had. `op9-desktop.service`'s `ExecStopPost` runs `op9-desktop-restore`, which
+  waits until gnome-shell has released tty7 and the desktop session's `gnome-session-shutdown.target`
+  and jobs have drained, then starts `op9-phone-session.service` — `phosh-session` as the user,
+  started directly rather than through a display manager. Without the wait, Phosh dies with
+  `VirtualTerminalAlreadyTaken` or a destructive transaction from `gnome-session-init-worker`,
+  and both screens stay black. The helper starts `phosh.service` instead on images that have one.
 - `op9-desktop` is both the chooser under Phosh and the helper under GNOME. It writes GNOME's
   `monitors.xml` from the display's EDID before starting, so GNOME never opens on the phone first.
 - Between the two compositors, the kernel console redrew itself onto every screen and left planes
@@ -324,9 +393,12 @@ that remember their state. Not copied, and why:
   the audio DSP, fed with the amplifiers' current and voltage, not something the amplifiers do. The
   PipeWire limiter stays. See [HARDWARE.md](HARDWARE.md).
 - **Camera image quality:** stock's denoising, sharpening, tone mapping, HDR and night modes run in
-  Qualcomm's Spectra ISP and CamX, which mainline doesn't drive. libcamera's software ISP gets the
-  colour matrices only. In dim light stock uses less saturated matrices, but libcamera can't switch
-  matrices by light level, so the normal-light ones are used throughout.
+  Qualcomm's Spectra ISP and CamX, which mainline doesn't drive. libcamera's software ISP now gets
+  the colour matrices plus a highlight rolloff and a light spatial denoise/unsharp (patch `0005`),
+  but nothing equivalent to Spectra's multi-frame noise reduction, HDR merge or local tone mapping.
+  In dim light stock uses less saturated matrices, but libcamera can't switch matrices by light
+  level, so the normal-light ones are used throughout. Lens shading correction exists in the
+  software ISP but needs the per-module calibration grids, which the port does not ship.
 - **Brightness curve:** stock maps its slider to panel levels 0–1695 (about 500 nits) and uses
   1696–2047 only from automatic brightness; mainline's slider covers 0–2047 directly.
 

@@ -57,6 +57,7 @@ mkdir -p "$BIN_STAGE"
 aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/touchboost" "$REPO/tools/touchboost.c"
 aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/alert-slider" "$REPO/tools/alert-slider.c"
 aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/op9-slot" "$REPO/tools/op9-slot.c"
+aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/op9-hdr" "$REPO/tools/op9-hdr.c" -lm
 # hexagonrpcd is not built here: postmarketos/pmaports/community/hexagonrpc
 # packages it, with the registry-write patches.
 

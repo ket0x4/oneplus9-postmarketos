@@ -4,7 +4,9 @@
 Description=GNOME desktop mode
 After=systemd-user-sessions.service
 Wants=dbus.socket systemd-logind.service op9-desktop-input.service
-Conflicts=getty@tty7.service phosh.service
+# postmarketOS edge runs Phosh under greetd/phrog, not a phosh.service; conflict with
+# whichever of them owns the seat so only one compositor is on the screens.
+Conflicts=getty@tty7.service phosh.service greetd.service
 After=getty@tty7.service phosh.service
 
 [Service]
@@ -14,10 +16,13 @@ ExecStartPre=+/usr/local/bin/op9-kms-reset
 # See op9-desktop.conf for Phosh: keep the kernel console off the screens while switching.
 ExecStop=+/usr/local/bin/op9-kms-reset --console-off
 ExecStart=/usr/local/bin/op9-desktop-session
-ExecStopPost=+/usr/bin/systemctl --no-block start phosh.service
+# phosh.service on images that have one, greetd (and its greeter) on ones that don't. The
+# helper waits for gnome-shell to release tty7; starting the display manager too early
+# leaves its session worker unable to take the VT and both screens stay black.
+ExecStopPost=+/usr/local/bin/op9-desktop-restore
 User=1000
 WorkingDirectory=~
-PAMName=op9-desktop
+PAMName=login
 Environment=XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_DESKTOP=gnome
 TTYPath=/dev/tty7
 StandardInput=tty

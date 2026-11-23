@@ -1,0 +1,26 @@
+# Phone mode: the user's Phosh session on the internal screen, without new hardware.
+#
+# postmarketOS edge runs Phosh under greetd/phrog, and greetd's initial_session only runs at
+# boot: restarting it after desktop mode shows the login greeter instead of the session the
+# user had. Desktop mode therefore starts this unit when it ends, so that unplugging the
+# display brings the phone back exactly as it was.
+[Unit]
+Description=Phosh phone mode
+After=systemd-user-sessions.service
+Conflicts=op9-desktop.service
+After=op9-desktop.service
+
+[Service]
+Type=simple
+ExecStartPre=+/usr/bin/chvt 7
+ExecStart=/usr/bin/phosh-session
+User=1000
+WorkingDirectory=~
+PAMName=login
+Environment=XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Phosh:GNOME XDG_SESSION_DESKTOP=phosh
+TTYPath=/dev/tty7
+StandardInput=tty
+TTYReset=yes
+TTYVHangup=yes
+UtmpIdentifier=tty7
+UtmpMode=user

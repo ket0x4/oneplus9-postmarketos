@@ -1,4 +1,32 @@
 #!/bin/sh
 # Started by op9-desktop.service as the phone's user: a GNOME session on the external display.
+#
+# greetd owns tty7 for the Phosh session it just lost. When its session worker exits it hangs
+# the TTY up, which would SIGHUP us before GNOME is even started.
+trap '' HUP
+
 [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+# Both sessions share this user manager and its gnome-session targets. The Phosh session is
+# torn down asynchronously, and starting GNOME while its stop jobs are still queued makes
+# gnome-session-init-worker abort ("Transaction ... is destructive, gnome-session-pre.target
+# has 'stop' job queued"), leaving no compositor on either screen.
+i=0
+while [ $i -lt 150 ]; do
+	busy=""
+	for u in gnome-session-pre.target gnome-session@phosh.target mobi.phosh.Shell.service; do
+		case "$(systemctl --user show -p ActiveState --value "$u" 2>/dev/null)" in
+		active|activating|deactivating|reloading) busy=1 ;;
+		esac
+	done
+	if [ -z "$busy" ] && [ -z "$(systemctl --user list-jobs --no-legend 2>/dev/null)" ]; then
+		break
+	fi
+	sleep 0.1
+	i=$((i + 1))
+done
+if [ -n "$busy" ] || [ -n "$(systemctl --user list-jobs --no-legend 2>/dev/null)" ]; then
+	echo "op9-desktop-session: old session still busy after 15 s, starting anyway"
+fi
+
 exec systemd-cat -t gnome-session gnome-session

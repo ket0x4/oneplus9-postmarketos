@@ -54,59 +54,25 @@ def save_config(c):
 
 
 
-# Settings Phosh and desktop mode want differently. Both sessions share the user's settings,
-# so each side saves the other's values when it starts and puts back its own.
+# Settings Phosh and desktop mode want differently. Both sessions share the user's settings:
 #   screen-keyboard-enabled: Phosh's on-screen keyboard needs it; in GNOME it pops a keyboard
 #     up on the TV for every text field.
 #   button-layout: phone apps fill the screen and need no buttons; desktop windows do.
-SWAPPED = {
-    ("org.gnome.desktop.a11y.applications", "screen-keyboard-enabled"): "false",
-    ("org.gnome.desktop.wm.preferences", "button-layout"): "'appmenu:minimize,maximize,close'",
-}
+# Phosh's docked manager rewrites the phone side of both on every start (docked-manager.c
+# calls set_enabled(FALSE) whenever the device isn't docked), so desktop mode only puts its
+# own values in place; nothing has to be saved back for Phosh.
+DESKTOP_SETTINGS = [
+    ("org.gnome.desktop.a11y.applications", "screen-keyboard-enabled", GLib.Variant("b", False)),
+    ("org.gnome.desktop.wm.preferences", "button-layout",
+     GLib.Variant("s", "appmenu:minimize,maximize,close")),
+]
 
 
-def read_settings():
-    out = {}
-    for (schema, key) in SWAPPED:
-        out[f"{schema} {key}"] = Gio.Settings.new(schema).get_value(key).print_(True)
-    return out
-
-
-def apply_settings(values):
-    for name, text in values.items():
-        schema, key = name.split(" ", 1)
-        try:
-            Gio.Settings.new(schema).set_value(key, GLib.Variant.parse(None, text, None, None))
-        except GLib.Error as e:
-            log("couldn't set", name, e.message)
+def apply_desktop_settings():
+    """Put GNOME's values in place; Phosh restores its own when it starts."""
+    for schema, key, value in DESKTOP_SETTINGS:
+        Gio.Settings.new(schema).set_value(key, value)
     Gio.Settings.sync()
-
-
-def switch_settings(side):
-    """Save the other side's values of SWAPPED and apply this side's."""
-    config = load_config()
-    raw = load_raw_config()
-    if raw.get("active") == side:
-        return
-    other = "phone" if side == "desktop" else "desktop"
-    raw[other + "_settings"] = read_settings()
-    mine = raw.get(side + "_settings")
-    if mine is None and side == "desktop":
-        mine = {f"{s} {k}": v for (s, k), v in SWAPPED.items()}
-    if mine:
-        apply_settings(mine)
-    raw["active"] = side
-    raw.update(config)
-    save_config(raw)
-    log("settings for", side, "mode applied")
-
-
-def load_raw_config():
-    try:
-        with open(CONFIG) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
 
 
 def external_connected():
@@ -178,8 +144,8 @@ def write_monitors_xml(connected):
     for name in connected:
         ident = edid_identity(name)
         if not ident or not ident[3]:
-            log("no usable EDID for", name, "- GNOME will start on the phone screen first")
-            return
+            log("no usable EDID for", name, "- GNOME would open on the phone screen")
+            return False
         ext.append(((name,) + ident[:3], ident[3]))
     key = {panel} | {i for i, _ in ext}
     try:
@@ -188,8 +154,10 @@ def write_monitors_xml(connected):
         root = ET.Element("monitors", version="2")
     for conf in root.findall("configuration"):
         if {spec_key(s) for s in conf.iter("monitorspec")} == key:
-            if any(spec_key(s) == panel for s in conf.findall("forlease/monitorspec")):
-                return  # already leases the phone screen (maybe tuned in Settings): keep it
+            leased = {spec_key(s) for s in conf.findall("forlease/monitorspec")}
+            disabled = {spec_key(s) for s in conf.findall("disabled/monitorspec")}
+            if leased and leased <= disabled:
+                return True  # already leases the phone screen (maybe tuned in Settings): keep it
             root.remove(conf)
     conf = ET.SubElement(root, "configuration")
     ET.SubElement(conf, "layoutmode").text = "logical"
@@ -208,17 +176,30 @@ def write_monitors_xml(connected):
         ET.SubElement(mode, "height").text = str(h)
         ET.SubElement(mode, "rate").text = "%.3f" % rate
         x += w
+    # Mutter rejects the whole file unless a monitor offered for lease is also listed as
+    # disabled ("For lease monitor must be explicitly disabled", meta_verify_monitors_config).
+    # When that happens GNOME ignores our layout and drives the phone screen itself, so the
+    # panel shows GNOME instead of the keyboard and desktop mode's switch is a no-op.
+    spec_xml(ET.SubElement(conf, "disabled"), panel)
     spec_xml(ET.SubElement(conf, "forlease"), panel)
     ET.indent(root)
     os.makedirs(os.path.dirname(MONITORS_XML), exist_ok=True)
     ET.ElementTree(root).write(MONITORS_XML + ".tmp", encoding="unicode")
     os.replace(MONITORS_XML + ".tmp", MONITORS_XML)
     log("stored a layout for", ", ".join(i[0] for i, _ in ext), "with the phone screen for lease")
+    return True
 
 
 def start_unit(unit):
     log("starting", unit)
     subprocess.run(["systemctl", "start", "--no-block", unit])
+
+
+def back_to_phone():
+    """Stop desktop mode; its ExecStopPost gives the seat back to Phosh once GNOME let go
+    of tty7. Starting Phosh from here races with the GNOME session still shutting down."""
+    log("back to phone mode")
+    subprocess.run(["systemctl", "stop", "--no-block", "op9-desktop.service"])
 
 
 class DisplayWatch:
@@ -300,7 +281,6 @@ class PhoneSide:
     def __init__(self, app):
         self.app = app
         self.chooser = None
-        switch_settings("phone")
         self.watch = DisplayWatch(self.changed)
         if self.watch.state or "--chooser" in sys.argv:
             GLib.timeout_add_seconds(3, lambda: self.changed(self.watch.state or ["test"]) and False)
@@ -330,19 +310,35 @@ class PhoneSide:
         self.start(mode, remember)
 
     def start(self, mode, remember):
-        config = load_raw_config()
-        config.update(load_config())
+        config = load_config()
         config["mode"] = mode
         if remember:
             config["ask"] = False
         save_config(config)
         log("desktop mode, phone screen:", mode)
-        # GNOME never drives the phone panel: op9-desktop-input owns its touches
+        # GNOME never drives the phone panel: op9-desktop-input owns its touches. If no layout
+        # could be stored the external screen would stay dark while the phone screen is leased
+        # away, so stay in phone mode instead of switching to a blank session.
         try:
-            write_monitors_xml(external_connected())
+            ok = write_monitors_xml(external_connected())
         except Exception as e:  # never let this stop the switch
             log("couldn't store a layout:", e)
+            ok = False
+        if not ok:
+            log("not switching: no usable external display")
+            self.refuse("The display isn't ready yet",
+                        "The connector reports a display but its EDID can't be read, so a "
+                        "desktop would open on a screen that stays dark. Reconnect the cable "
+                        "or try another one.")
+            return
         start_unit("op9-desktop.service")
+
+    def refuse(self, heading, body):
+        """Tell the user why nothing happened instead of leaving them on a black screen."""
+        dialog = Adw.MessageDialog(transient_for=self.app.get_active_window(),
+                                   heading=heading, body=body)
+        dialog.add_response("close", "OK")
+        dialog.present()
 
 
 class DesktopSide:
@@ -350,7 +346,7 @@ class DesktopSide:
 
     def __init__(self, app):
         self.app = app
-        switch_settings("desktop")
+        apply_desktop_settings()
         self.mode = load_config()["mode"]
         self.seen = False
         self.lease = None
@@ -364,8 +360,8 @@ class DesktopSide:
 
     def check_started(self):
         if not self.seen:
-            log("no external display after 20 s, back to phone mode")
-            start_unit("phosh.service")
+            log("no external display after 20 s")
+            back_to_phone()
         return False
 
     def changed(self, connected):
@@ -384,8 +380,8 @@ class DesktopSide:
     def leave(self):
         self.leaving = None
         if not external_connected():
-            log("external display gone, back to phone mode")
-            start_unit("phosh.service")
+            log("external display gone")
+            back_to_phone()
         return False
 
     def apply_mode(self, connected, tries=0):
@@ -402,7 +398,12 @@ class DesktopSide:
                 log("gdctl failed, retrying:", r.stderr.strip())
                 GLib.timeout_add_seconds(2, lambda: self.apply_mode(external_connected(), tries + 1) and False)
                 return
+            # The external display never came up (a monitor whose DP link doesn't train, a
+            # cable that only carries power, ...). Staying here would leave GNOME on a screen
+            # nobody can see, so hand the phone back instead.
             log("gdctl gave up:", r.stderr.strip())
+            back_to_phone()
+            return
         self.start_lease()
 
     def start_lease(self):

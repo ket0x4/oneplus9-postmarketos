@@ -414,8 +414,9 @@ class Panel:
         self.back ^= 1
 
     def off(self):
-        if not self.on:
-            return
+        # Always ask, even if we think nothing is on: the CRTC arrives with whatever the previous
+        # compositor left on it, and a commit that failed half way leaves self.on lying. Turning
+        # an already-off CRTC off again is harmless.
         pl, pp = self.plane, self.pp
         self._commit([(pl, pp["FB_ID"], 0), (pl, pp["CRTC_ID"], 0),
                       (self.crtc, self.cp["ACTIVE"], 0), (self.crtc, self.cp["MODE_ID"], 0),
@@ -423,6 +424,14 @@ class Panel:
         self.on = False
 
     def close(self):
+        # Turn the CRTC and plane off before letting go of the lease. Closing the fd while the
+        # plane is still on leaves the last frame scanned out and the next compositor cannot
+        # commit over it ("connector DSI-1: Atomic commit failed: Resource busy"), so the phone
+        # shows a frozen picture instead of Phosh.
+        try:
+            self.off()
+        except OSError as e:
+            log("couldn't turn the phone screen off:", e)
         for b in self.bufs:
             b["mm"].close()
         os.close(self.fd)

@@ -1,0 +1,151 @@
+From c5e136276976d8214f34ea87702cfa8cb0ce14b8 Mon Sep 17 00:00:00 2001
+From: port <a@b.c>
+Date: Sun, 22 Nov 2026 18:12:50 +0300
+Subject: [PATCH] libcamera: softisp: Malvar-He-Cutler demosaic for packed raw
+
+Replace the bilinear demosaic in bayer_1x_packed.frag with the 5x5
+gradient-corrected linear (Malvar-He-Cutler) filter. The Laplacian of the
+sampled channel corrects the bilinear estimate of the missing one, which
+removes the colour fringing and mush of plain bilinear. The port follows the
+IPOL reference, including dropping out-of-image taps and adjusting the
+denominators for the taps actually used at the borders.
+
+Validated by rendering the shader with Mesa against an independent Python
+port of the reference on a synthetic RGGB/BGGR/GRBG/GBRG image: all four
+phases match within 1/255 on the interior.
+---
+ src/libcamera/shaders/bayer_1x_packed.frag | 111 ++++++++++++++-------
+ 1 file changed, 76 insertions(+), 35 deletions(-)
+
+diff --git a/src/libcamera/shaders/bayer_1x_packed.frag b/src/libcamera/shaders/bayer_1x_packed.frag
+index dcf5d4b..ab8accc 100644
+--- a/src/libcamera/shaders/bayer_1x_packed.frag
++++ b/src/libcamera/shaders/bayer_1x_packed.frag
+@@ -106,6 +106,79 @@ float fetchPixel(vec2 p)
+ 	return (msb * LSB_MASK + floor(lsb + 0.001)) / PIXEL_MAX;
+ }
+ 
++/*
++ * Malvar-He-Cutler gradient-corrected linear demosaic (5x5). This is a direct
++ * port of the reference implementation: the five-point Laplacian of the
++ * sampled channel corrects the bilinear estimate of the missing one, which
++ * removes most of the colour fringing and mush of plain bilinear. Out-of-image
++ * taps are dropped and the denominators adjusted for the taps actually used,
++ * like the reference does at the borders.
++ *
++ * evenCol/evenRow select the CFA phase for the centre pixel (1.0 means the
++ * pixel is on the red column/row).
++ */
++vec3 mhcDemosaic(vec2 c, float evenCol, float evenRow)
++{
++	float n[25];
++	float pr[25];
++
++	for (int j = 0; j < 5; j++) {
++		for (int i = 0; i < 5; i++) {
++			vec2 p = c + vec2(float(i - 2), float(j - 2));
++			float inside = (p.x >= 0.0 && p.y >= 0.0 &&
++					p.x <= tex_size.x - 1.0 &&
++					p.y <= tex_size.y - 1.0) ? 1.0 : 0.0;
++			pr[j * 5 + i] = inside;
++			n[j * 5 + i] = inside * fetchPixel(p);
++		}
++	}
++
++	float centre = n[(2)*5+(2)];
++
++	if (evenCol > 0.5 && evenRow > 0.5) {
++		/* Red centre: green from the four axial neighbours. */
++		float g = (2.0 * (n[(1)*5+(2)] + n[(2)*5+(1)] + n[(2)*5+(3)] + n[(3)*5+(2)])
++			   + (pr[(2)*5+(0)] + pr[(2)*5+(4)] + pr[(0)*5+(2)] + pr[(4)*5+(2)]) * centre
++			   - n[(2)*5+(0)] - n[(2)*5+(4)] - n[(0)*5+(2)] - n[(4)*5+(2)])
++			  / (2.0 * (pr[(1)*5+(2)] + pr[(2)*5+(1)] + pr[(2)*5+(3)] + pr[(3)*5+(2)]));
++		float b = (4.0 * (n[(1)*5+(1)] + n[(1)*5+(3)] + n[(3)*5+(1)] + n[(3)*5+(3)])
++			   + 3.0 * ((pr[(2)*5+(0)] + pr[(2)*5+(4)] + pr[(0)*5+(2)] + pr[(4)*5+(2)]) * centre
++				    - n[(2)*5+(0)] - n[(2)*5+(4)] - n[(0)*5+(2)] - n[(4)*5+(2)]))
++			  / (4.0 * (pr[(1)*5+(1)] + pr[(1)*5+(3)] + pr[(3)*5+(1)] + pr[(3)*5+(3)]));
++		return vec3(centre, g, b);
++	} else if (evenCol < 0.5 && evenRow < 0.5) {
++		/* Blue centre: mirrored. */
++		float g = (2.0 * (n[(1)*5+(2)] + n[(2)*5+(1)] + n[(2)*5+(3)] + n[(3)*5+(2)])
++			   + (pr[(2)*5+(0)] + pr[(2)*5+(4)] + pr[(0)*5+(2)] + pr[(4)*5+(2)]) * centre
++			   - n[(2)*5+(0)] - n[(2)*5+(4)] - n[(0)*5+(2)] - n[(4)*5+(2)])
++			  / (2.0 * (pr[(1)*5+(2)] + pr[(2)*5+(1)] + pr[(2)*5+(3)] + pr[(3)*5+(2)]));
++		float r = (4.0 * (n[(1)*5+(1)] + n[(1)*5+(3)] + n[(3)*5+(1)] + n[(3)*5+(3)])
++			   + 3.0 * ((pr[(2)*5+(0)] + pr[(2)*5+(4)] + pr[(0)*5+(2)] + pr[(4)*5+(2)]) * centre
++				    - n[(2)*5+(0)] - n[(2)*5+(4)] - n[(0)*5+(2)] - n[(4)*5+(2)]))
++			  / (4.0 * (pr[(1)*5+(1)] + pr[(1)*5+(3)] + pr[(3)*5+(1)] + pr[(3)*5+(3)]));
++		return vec3(r, g, centre);
++	}
++
++	/* Green centre: red and blue sit along the two axes. */
++	float diagV = n[(1)*5+(1)] + n[(1)*5+(3)] + n[(2)*5+(0)] + n[(2)*5+(4)] + n[(3)*5+(1)] + n[(3)*5+(3)];
++	float diagPv = pr[(1)*5+(1)] + pr[(1)*5+(3)] + pr[(2)*5+(0)] + pr[(2)*5+(4)] + pr[(3)*5+(1)] + pr[(3)*5+(3)];
++	float diagH = n[(1)*5+(1)] + n[(1)*5+(3)] + n[(0)*5+(2)] + n[(4)*5+(2)] + n[(3)*5+(1)] + n[(3)*5+(3)];
++	float diagPh = pr[(1)*5+(1)] + pr[(1)*5+(3)] + pr[(0)*5+(2)] + pr[(4)*5+(2)] + pr[(3)*5+(1)] + pr[(3)*5+(3)];
++
++	float r = (8.0 * (n[(2)*5+(1)] + n[(2)*5+(3)])
++		   + (2.0 * diagPv - pr[(0)*5+(2)] - pr[(4)*5+(2)]) * centre
++		   - 2.0 * diagV + n[(0)*5+(2)] + n[(4)*5+(2)])
++		  / (8.0 * (pr[(2)*5+(1)] + pr[(2)*5+(3)]));
++
++	float b = (8.0 * (n[(1)*5+(2)] + n[(3)*5+(2)])
++		   + (2.0 * diagPh - pr[(2)*5+(0)] - pr[(2)*5+(4)]) * centre
++		   - 2.0 * diagH + n[(2)*5+(0)] + n[(2)*5+(4)])
++		  / (8.0 * (pr[(1)*5+(2)] + pr[(3)*5+(2)]));
++
++	/* In a red row the left/right neighbours are red, in a blue row blue. */
++	return evenRow > 0.5 ? vec3(r, centre, b) : vec3(b, centre, r);
++}
++
+ void main(void)
+ {
+ 	vec3 rgb;
+@@ -125,41 +198,9 @@ void main(void)
+ 	bool even_col = alternate.x < 1.0;
+ 	bool even_row = alternate.y < 1.0;
+ 
+-	/*
+-	 * Sample the central pixel and the ones with an offset of -1..+1 pixel.
+-	 * With C the centre:
+-	 *
+-	 *   | (-1,-1) ( 0,-1) ( 1,-1) |   | D0 A0 D1 |
+-	 *   | (-1, 0) ( 0, 0) ( 1, 0) | = | B0  C B1 |
+-	 *   | (-1, 1) ( 0, 1) ( 1, 1) |   | D2 A1 D3 |
+-	 */
+-	float A0 = fetchPixel(center_pixel + vec2(0.0, -1.0));
+-	float A1 = fetchPixel(center_pixel + vec2(0.0, 1.0));
+-	float B0 = fetchPixel(center_pixel + vec2(-1.0, 0.0));
+-	float B1 = fetchPixel(center_pixel + vec2(1.0, 0.0));
+-	float D0 = fetchPixel(center_pixel + vec2(-1.0, -1.0));
+-	float D1 = fetchPixel(center_pixel + vec2(1.0, -1.0));
+-	float D2 = fetchPixel(center_pixel + vec2(-1.0, 1.0));
+-	float D3 = fetchPixel(center_pixel + vec2(1.0, 1.0));
+-
+-	float greenH = (A0 + A1) * 0.5;
+-	float greenV = (B0 + B1) * 0.5;
+-	float greenX = (A0 + A1 + B0 + B1) * 0.25;
+-	float cross = (D0 + D1 + D2 + D3) * 0.25;
+-
+-	/*
+-	 * EE: R = C, G = greenX, B = cross
+-	 * EO: R = greenH, G = C, B = greenV
+-	 * OE: R = greenV, G = C, B = greenH
+-	 * OO: R = cross, G = greenX, B = C
+-	 */
+-	rgb = even_col ?
+-		(even_row ?
+-			vec3(C, greenX, cross) :
+-			vec3(greenH, C, greenV)) :
+-		(even_row ?
+-			vec3(greenV, C, greenH) :
+-			vec3(cross, greenX, C));
++	rgb = mhcDemosaic(center_pixel,
++			  even_col ? 1.0 : 0.0,
++			  even_row ? 1.0 : 0.0);
+ #endif
+ 
+ 	rgb = (rgb - blacklevel) / (1.0 - blacklevel);
+-- 
+2.56.1
+

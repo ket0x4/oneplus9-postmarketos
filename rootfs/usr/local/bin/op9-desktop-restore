@@ -1,0 +1,46 @@
+#!/bin/sh
+# Started by op9-desktop.service's ExecStopPost: give the seat back to Phosh.
+#
+# Three things have to settle before Phosh can start:
+#  - gnome-shell and the desktop session's user manager still hold /dev/tty7. A display
+#    manager started too early opens fine but cannot get the VT (VirtualTerminalAlreadyTaken)
+#    and exits, leaving both screens black.
+#  - Both sessions share one user manager and its gnome-session targets. Starting Phosh while
+#    the desktop session's stop jobs (gnome-session-shutdown.target) are still queued makes
+#    gnome-session-init-worker abort with a destructive transaction.
+#  - greetd's initial_session only runs at boot, so restarting greetd would show the login
+#    greeter instead of the user's session.
+user=$(getent passwd 1000 | cut -d: -f1)
+i=0
+while [ $i -lt 150 ]; do
+	busy=""
+	pgrep -x gnome-shell >/dev/null 2>&1 && busy=1
+	if [ -n "$user" ] && [ -n "$(loginctl list-sessions --no-legend 2>/dev/null |
+			awk -v u="$user" '$3 == u && $4 == "seat0"')" ]; then
+		busy=1
+	fi
+	[ -z "$busy" ] && break
+	sleep 0.2
+	i=$((i + 1))
+done
+[ $i -lt 150 ] || echo "op9-desktop-restore: seat still busy after 30 s"
+
+i=0
+while [ $i -lt 150 ]; do
+	jobs=$(systemctl --user --machine="$user"@.host list-jobs --no-legend 2>/dev/null)
+	state=$(systemctl --user --machine="$user"@.host show -p ActiveState --value \
+		gnome-session-shutdown.target 2>/dev/null)
+	case "$state" in active|activating|deactivating|reloading) busy=1 ;; *) busy="" ;; esac
+	if [ -z "$jobs" ] && [ -z "$busy" ]; then
+		break
+	fi
+	sleep 0.2
+	i=$((i + 1))
+done
+[ $i -lt 150 ] || echo "op9-desktop-restore: user manager still busy after 30 s"
+
+if systemctl cat phosh.service >/dev/null 2>&1; then
+	systemctl --no-block start phosh.service
+else
+	systemctl --no-block start op9-phone-session.service
+fi
