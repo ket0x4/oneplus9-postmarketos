@@ -365,6 +365,18 @@ and a faint ripple every 3 mm a finger travels on the trackpad.
   and both screens stay black. The helper starts `phosh.service` instead on images that have one.
 - `op9-desktop` is both the chooser under Phosh and the helper under GNOME. It writes GNOME's
   `monitors.xml` from the display's EDID before starting, so GNOME never opens on the phone first.
+  Mutter only accepts that file if a monitor offered in `<forlease>` is also listed in
+  `<disabled>`; otherwise it ignores the whole file with "For lease monitor must be explicitly
+  disabled" and drives the phone screen itself, so the panel shows a frozen GNOME and the
+  keyboard never appears.
+- A monitor that reports `connected` but whose DP link never trains leaves a black screen: the
+  kernel logs `link training on sink failed` and the EDID stays empty, so there is no mode to
+  program. `op9-desktop` checks the EDID before switching and refuses with a dialog instead, and
+  if `gdctl` still cannot place the session after its retries it hands the phone back rather than
+  stranding GNOME on an invisible screen.
+- `op9-desktop-input` turns the lease's CRTC off before closing it. Dropping the lease with the
+  plane still on the last frame stays scanned out and the next compositor's commits fail with
+  `connector DSI-1: Atomic commit failed: Resource busy`, which looks like a frozen GNOME.
 - Between the two compositors, the kernel console redrew itself onto every screen and left planes
   that mutter can't move off it. `op9-kms-reset` unbinds the console and detaches leftover planes.
 - Patch 0144 keeps DP off the mixers and CTL the panel needs. Without it, the panel came back on
