@@ -126,6 +126,27 @@ try_root() {
 			find /sysroot/etc /sysroot/usr /sysroot/root -user 1000 -exec chown 0:0 {} + 2>/dev/null
 			echo "by op9-initramfs" > /sysroot/etc/op9-rootfs-initialised
 		fi
+		# /sbin/init must be systemd. Installing busybox or a plain `apk upgrade` can
+		# put its own /sbin/init -> /bin/busybox symlink back, and then the kernel runs
+		# busybox init, which reads /etc/inittab and hands over to OpenRC - not
+		# installed here - so it panics on the first getty and the phone reboot-loops
+		# with "can't open /dev/tty1..6". The rootfs is mounted rw right here, before
+		# switch_root, so repair it every boot; this is cheap and idempotent.
+		if [ -L /sysroot/sbin/init ]; then
+			target=$(readlink /sysroot/sbin/init)
+			case "$target" in
+			*busybox*)
+				echo "op9-initramfs: /sbin/init pointed at $target, restoring systemd"
+				if [ -e /sysroot/usr/sbin/init ]; then
+					ln -sfn /usr/sbin/init /sysroot/sbin/init
+				elif [ -e /sysroot/usr/lib/systemd/systemd ]; then
+					ln -sfn /usr/lib/systemd/systemd /sysroot/sbin/init
+				else
+					echo "op9-initramfs: no systemd to point /sbin/init at" >&2
+				fi
+				;;
+			esac
+		fi
 		kill "$SERIAL_PID" "$TELNETD_PID" "$UDHCPD_PID" 2>/dev/null
 		umount /sys/kernel/debug /sys/kernel/config /dev/pts 2>/dev/null
 		exec switch_root /sysroot /sbin/init
