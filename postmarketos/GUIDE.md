@@ -57,6 +57,18 @@ The 167-patch Linux 7.3 kernel ([patches/kernel/](../patches/kernel)) already co
 [pmos-kconfig.fragment](pmos-kconfig.fragment) repeats these options. `kernel/op9.config` is the
 single source of truth; use the fragment only when starting from a different base config.
 
+The config is also pruned to this hardware. Only the sm8350 platform is selected (`ARCH_QCOM`), and
+drivers for other SoCs, GPUs, Bluetooth vendors, Ethernet vendors, RAID/SAS HBAs, ATA, MTD, CAN, DVB
+and audio platforms for other SoCs are off, so the build and the module tree carry what the phone
+actually probes. Nothing the device tree asks for is removed: the Adreno/MSM display stack, WCN6855
+Wi-Fi and Bluetooth (`ath11k`, `btqca`), UFS, USB/Type-C with the FSA4480 mux, fastrpc/QRTR for the
+DSPs, the WCD9380/TFA9874 audio path, the IMX/OV camera sensors and the AW8697 haptics stay.
+
+Wireless and filesystem drivers are kept in full, because both are plausible add-ons in desktop
+mode: the common USB Wi-Fi adapters are modules (`mt7601u`, `mt76x0u`/`mt76x2u`, `mt7921u`/`mt7925u`,
+`rtl8xxxu`, `rtw88`/`rtw89`, `ath9k_htc`, `rt2800usb`, `brcmfmac`, `mwifiex`, `rsi` and others), as
+are `btrfs`, `exFAT`, `NTFS3`, `9p` and NFS, so a USB dongle or an external disk works.
+
 > **Important (`initramfs`)**: our boot image ([initramfs/init](../initramfs/init)) brings up USB
 > NCM (`172.16.42.1`) with a rescue shell, mounts `/dev/op9/userdata` at `/sysroot` and
 > `switch_root`s into `/sysroot/sbin/init` (`systemd`). That is how the postmarketOS rootfs on
@@ -153,10 +165,15 @@ patch-series hash and the config hash) and `Image.sha256`:
 kernel/build.sh work
 ```
 
-The build is reproducible: the same inputs give the same `Image`, and it never reads the clock or the
-build machine's paths. Rebuild a release tag and compare against the `Image.sha256` in its assets to
-check it. If `work/linux` already exists with local changes, the build refuses to reset it — commit or
-stash them, or set `KERNEL_FORCE_RESET=1` to discard them.
+The build is reproducible: the same inputs and the same compiler and linker versions give the same
+`Image`, and it never reads the clock or the build machine's paths. It builds with GCC and
+`CONFIG_LTO_NONE`, the combination that boots on this phone; `TOOLCHAIN=clang` selects a ThinLTO
+build, which compiles but does not boot here (it dies before the ramoops console comes up, so there
+is no log to read). `build-manifest.txt` records the compiler and linker versions, so a mismatch
+there explains it if a rebuild does not match. `ccache` is used when installed, which only speeds
+rebuilds up. Rebuild a release tag and compare against the `Image.sha256` in its assets to check it.
+If `work/linux` already exists with local changes, the build refuses to reset it — commit or stash
+them, or set `KERNEL_FORCE_RESET=1` to discard them.
 
 Then run [build-pmos-image.sh](build-pmos-image.sh), and the `populate-mounted-rootfs.sh` it writes,
 to fill the mounted rootfs. There is no device argument: one kernel and one `rootfs/` overlay serve
@@ -226,6 +243,24 @@ img2simg ../rootfs-build/pmos/pmos-root.img ../rootfs-build/pmos/pmos-userdata.s
    fastboot set_active a
    fastboot reboot
    ```
+1b. **Test a new kernel on the spare slot first.** A kernel that does not reach userspace looks
+   exactly like a bootloop at the logo, and the panic log may never be written (clang ThinLTO builds
+   here die before the ramoops console exists). Write the candidate to `boot_b`, boot it, and keep
+   `boot_a` as the known-good image:
+   ```sh
+   fastboot flash boot_b <candidate.img>
+   fastboot set_active b
+   fastboot reboot
+   ```
+   If it does not come up, `fastboot set_active a` switches back. Two rules make the test valid:
+   - **The modules must match the kernel.** `CONFIG_MODVERSIONS` is off, so a module built from a
+     different config loads without complaint and corrupts the running kernel. Build the candidate
+     with `KERNEL_LOCALVERSION=-test`, install `work/modroot/lib/modules/<release>` on the phone
+     (a separate directory, next to the installed one) and only then boot it. Without that
+     separation a boot loop means nothing about the kernel itself.
+   - **LTO does not boot here.** `CONFIG_LTO_CLANG_THIN` builds cleanly but hangs at the logo with no
+     pstore record, so `kernel/op9.config` ships `CONFIG_LTO_NONE` and GCC, which is the combination
+     verified on hardware.
 2. Once it boots, connect over USB NCM at `172.16.42.1` and grow `userdata` to the full disk size
    (`101 GB`):
    ```sh

@@ -52,7 +52,7 @@ jobs:
               cat out/build-manifest.txt
               printf '```\n'
               printf '\nThe build is reproducible: check out this tag, run `kernel/build.sh`, and\n'
-              printf '`Image` hashes to the same value (about 39 MB, no debug info).\n'
+              printf '`Image` hashes to the same value (about 34 MB, no debug info, no LTO).\n'
             } >> notes.md
           fi
           changes="src/docs/releases/$GITHUB_REF_NAME.md"

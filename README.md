@@ -80,10 +80,15 @@ experience recovering a phone from fastboot.
 
 ## Reproducible builds
 
-Two builds in different directories give byte-identical `Image` files. The kernel base is pinned by
-commit rather than tag, the patch series is hashed, `SOURCE_DATE_EPOCH` comes from the base commit,
-debug info is off, and every third-party input has a checksum. `work/build/build-manifest.txt`
-records what went in, and CI builds the initramfs twice and fails if the two differ.
+Two builds in different directories give byte-identical `Image` files when they use the same compiler
+and linker version, which `work/build/build-manifest.txt` records. The kernel is built with GCC
+(`aarch64-linux-gnu-gcc`) and `CONFIG_LTO_NONE`; a clang ThinLTO build is available
+(`TOOLCHAIN=clang`) but that kernel does not boot on this phone, so it is not the default. The
+kernel base is pinned by commit rather than tag, the patch series is hashed, `SOURCE_DATE_EPOCH`
+comes from the base commit, debug info is off, modules are zstd-compressed, and every third-party
+input has a checksum. `work/build/build-manifest.txt` records what went in, `kernel/build.sh` uses
+`ccache` when it is installed (it only speeds rebuilds up), and CI builds the initramfs twice and
+fails if the two differ.
 
 If your source tree has local changes, `kernel/build.sh` refuses to reset it; set
 `KERNEL_FORCE_RESET=1` to discard them.
