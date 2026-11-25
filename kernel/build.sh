@@ -3,19 +3,33 @@
 #
 #   kernel/build.sh [workdir]        default workdir: ./work
 #
+# TOOLCHAIN=gcc|clang            compiler suite. Default is gcc. The clang path
+#                                builds with ThinLTO, but that kernel does not
+#                                boot on this phone (it dies before the ramoops
+#                                console is up, so there is no log to read); the
+#                                toolchain is only kept for testing it.
 # KERNEL_GIT=<url>               where to fetch the kernel from
 # KERNEL_COMMIT=<sha>            the base commit to build on (default: the one
 #                                pinned below). This is the commit, not the tag
 #                                name: tags can be moved or re-pointed.
 # JOBS=<n>                       parallel jobs
 # SOURCE_DATE_EPOCH=<secs>       build timestamp (default: the base commit's date)
+# KERNEL_LOCALVERSION=<suffix>   appended to the release name (kernel.release
+#                                and /lib/modules/<release>). Set it when testing
+#                                a kernel that must not share a module tree with
+#                                the installed one: modules built for another
+#                                config load silently (MODVERSIONS is off) and
+#                                corrupt the running kernel.
+# CCACHE_DISABLE=1               do not wrap the compiler in ccache
 # KERNEL_FORCE_RESET=1           discard local changes in the source tree. Off by
 #                                default: an existing $SRC may hold work in progress
 #                                and the build refuses to throw it away.
 #
-# The build is reproducible: the same base commit, patch series and config give
-# the same Image, and the shipped config has no debug info in it. Nothing here
-# depends on the clock, the user or the host name.
+# The build is reproducible: the same base commit, patch series, config and
+# compiler version give the same Image, and the shipped config has no debug info
+# in it. Nothing here depends on the clock, the user or the host name. The
+# compiler and linker versions are recorded in build-manifest.txt because LTO
+# output does depend on them.
 #
 # The default build has no addresses in it and runs on every phone: the Wi-Fi and
 # Bluetooth addresses are read from the modem at boot by op9-addresses.service.
@@ -33,7 +47,54 @@ KERNEL_GIT=${KERNEL_GIT:-https://git.kernel.org/pub/scm/linux/kernel/git/torvald
 # deleted tag upstream can't silently change what gets built.
 KERNEL_COMMIT=${KERNEL_COMMIT:-c03c1a14507dfaf8b856c2608f9ac216021fc222}
 SRC=$WORK/linux; OUT=$WORK/build; JOBS=${JOBS:-$(nproc)}
-MK=(make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j"$JOBS")
+TOOLCHAIN=${TOOLCHAIN:-gcc}
+CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
+# Appended to the release name by scripts/setlocalversion (it reads LOCALVERSION
+# from the environment). Left unset when empty: setlocalversion only adds the
+# "+" suffix for a tree that is not on a tag when LOCALVERSION is unset, and the
+# installed module tree is named 7.3.0-op9+.
+KERNEL_LOCALVERSION=${KERNEL_LOCALVERSION:-}
+if [ -n "$KERNEL_LOCALVERSION" ]; then
+	LOCALVERSION=$KERNEL_LOCALVERSION
+	export LOCALVERSION
+fi
+
+# TOOLCHAIN selects the compiler suite. LLVM=1 makes Kbuild use clang, ld.lld
+# and the llvm-* binutils; CROSS_COMPILE still sets clang's --target triple.
+# The config carries CONFIG_LTO_NONE, so neither path sets up LTO.
+case "$TOOLCHAIN" in
+clang)
+	CC=clang
+	HOSTCC=clang
+	MK=(make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
+		LLVM=1 LLVM_IAS=1 -j"$JOBS")
+	for cmd in clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+		command -v "$cmd" >/dev/null 2>&1 ||
+			{ echo "kernel/build.sh: $cmd not found (needed for TOOLCHAIN=clang)" >&2; exit 1; }
+	done
+	;;
+gcc)
+	# HOSTCC must stay the host compiler: the kernel's build tools run on this
+	# machine, only the target objects are cross-compiled.
+	CC=${CROSS_COMPILE}gcc
+	HOSTCC=gcc
+	MK=(make -C "$SRC" O="$OUT" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$JOBS")
+	command -v "$CC" >/dev/null 2>&1 ||
+		{ echo "kernel/build.sh: $CC not found (needed for TOOLCHAIN=gcc)" >&2; exit 1; }
+	;;
+*)
+	echo "kernel/build.sh: unknown TOOLCHAIN=$TOOLCHAIN (clang or gcc)" >&2
+	exit 1
+	;;
+esac
+
+# A warm ccache turns a rebuild after a config or patch change from a full
+# compile into a cache run. It does not affect the output.
+HAVE_CCACHE=0
+if [ "${CCACHE_DISABLE:-0}" != 1 ] && command -v ccache >/dev/null 2>&1; then
+	HAVE_CCACHE=1
+	MK+=(CC="ccache $CC" HOSTCC="ccache $HOSTCC")
+fi
 
 mkdir -p "$WORK" "$OUT"
 
@@ -105,14 +166,28 @@ if [ -n "${BT_ADDR:-}" ]; then
 		"$SRC/arch/arm64/boot/dts/qcom/sm8350-oneplus-common.dtsi"
 fi
 
-cp "$HERE/op9.config" "$OUT/.config"
-# These paths are baked into the kernel's embedded .config, so they must not be
-# absolute: a build in /tmp/a would then differ from one in /tmp/b. The assembler
-# resolves the relative path against $OUT, which is where the DTBs are copied.
-"$SRC/scripts/config" --file "$OUT/.config" --set-str ARM64_OP9_BUILTIN_DTB_PATH "op9-builtin.dtb"
-"$SRC/scripts/config" --file "$OUT/.config" --enable ARM64_OP9_BUILTIN_DTB_2
-"$SRC/scripts/config" --file "$OUT/.config" --set-str ARM64_OP9_BUILTIN_DTB_PATH_2 "op9-builtin-lemonade.dtb"
+# Replace the built config only when it differs, so a rerun that changed nothing
+# does not restart Kconfig and touch the tree.
+if ! cmp -s "$HERE/op9.config" "$OUT/.config"; then
+	cp "$HERE/op9.config" "$OUT/.config"
+fi
+# The embedded-DTB paths are baked into .config, so they must stay relative: a
+# build in /tmp/a would otherwise differ from one in /tmp/b. The assembler
+# resolves them against $OUT, which is where the DTBs are copied.
 "${MK[@]}" olddefconfig
+for want in \
+	'CONFIG_ARM64_OP9_BUILTIN_DTB=y' \
+	'CONFIG_ARM64_OP9_BUILTIN_DTB_PATH="op9-builtin.dtb"' \
+	'CONFIG_ARM64_OP9_BUILTIN_DTB_2=y' \
+	'CONFIG_ARM64_OP9_BUILTIN_DTB_PATH_2="op9-builtin-lemonade.dtb"'
+do
+	grep -qx "$want" "$OUT/.config" ||
+		{ echo "kernel/build.sh: op9.config lost $want" >&2; exit 1; }
+done
+# The shipped config must build into the kernel it claims: no LTO, which is the
+# combination verified to boot here.
+grep -q '^CONFIG_LTO_NONE=y' "$OUT/.config" ||
+	{ echo "kernel/build.sh: op9.config enabled LTO" >&2; exit 1; }
 # The shipped config has no debug info (CONFIG_DEBUG_INFO_NONE): it only inflates
 # Image, and a build artifact that depends on nothing else is easier to compare.
 # Assert it, so an edit that flips it back fails the build instead of shipping a
@@ -123,8 +198,13 @@ grep -q '^CONFIG_DEBUG_INFO_NONE=y' "$OUT/.config" ||
 # The kernel carries its own device trees, so build those first. Both phones'
 # trees are embedded and the kernel picks one from what the bootloader reports.
 "${MK[@]}" qcom/sm8350-oneplus-lemonadep.dtb qcom/sm8350-oneplus-lemonade.dtb
-cp "$OUT/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonadep.dtb" "$OUT/op9-builtin.dtb"
-cp "$OUT/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dtb" "$OUT/op9-builtin-lemonade.dtb"
+# The built-in DTB object is built from these files, so copying unconditionally
+# would touch them and force a relink of vmlinux on every rerun.
+copy_if_different() {
+	cmp -s "$1" "$2" || cp "$1" "$2"
+}
+copy_if_different "$OUT/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonadep.dtb" "$OUT/op9-builtin.dtb"
+copy_if_different "$OUT/arch/arm64/boot/dts/qcom/sm8350-oneplus-lemonade.dtb" "$OUT/op9-builtin-lemonade.dtb"
 "${MK[@]}" Image modules
 rm -rf "$WORK/modroot"
 "${MK[@]}" modules_install INSTALL_MOD_PATH="$WORK/modroot" INSTALL_MOD_STRIP=1
@@ -139,7 +219,16 @@ krel=$(cat "$OUT/include/config/kernel.release")
 	echo "patch_count=$(ls "$PATCHES"/*.patch | wc -l)"
 	echo "config_sha256=$(sha256sum "$HERE/op9.config" | cut -d' ' -f1)"
 	echo "source_date_epoch=$SOURCE_DATE_EPOCH"
-	echo "cross_compiler=$(aarch64-linux-gnu-gcc --version | head -1)"
+	echo "toolchain=$TOOLCHAIN"
+	if [ "$TOOLCHAIN" = clang ]; then
+		echo "compiler=$($CC --version | head -1)"
+		echo "linker=$(ld.lld --version)"
+		echo "lto=thin"
+	else
+		echo "compiler=$($CC --version | head -1)"
+		echo "lto=none"
+	fi
+	echo "ccache=$HAVE_CCACHE"
 	# An address-baked build is not reproducible from the repository alone.
 	echo "wifi_mac=${WIFI_MAC:-none}"
 	echo "bt_addr=${BT_ADDR:-none}"
