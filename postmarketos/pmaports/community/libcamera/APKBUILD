@@ -1,18 +1,20 @@
 # Maintainer: ibrahim yöndemli <ket0x4@pm.me>
 # libcamera with the software-ISP patches this port needs: a correctly centred
 # debayer for the scaled-down mantis, the OnePlus 9 sensor gain helpers (IMX689,
-# IMX766, IMX471, GC02M1B), contrast-detect autofocus, a greyscale path for the
-# mono camera, and a tunable highlight-rolloff plus sharpen/denoise detail pass.
+# IMX766, IMX471, GC02M1B), contrast-detect autofocus, and a greyscale path for
+# the mono camera plus a tunable highlight/detail pass (both off by default).
+# The software ISP runs on the CPU only; the EGL/GPU debayer is not built,
+# matching the configuration that streams reliably through PipeWire.
 # Replaces Alpine's libcamera so the -ipa subpackage comes from the same build.
 pkgname=libcamera
 pkgver=0.8.0
-pkgrel=0
+pkgrel=5
 pkgdesc="Camera support library, with OnePlus 9 software-ISP patches"
 url="https://libcamera.org/"
 arch="aarch64"
 license="LGPL-2.1-or-later AND GPL-2.0-or-later AND BSD-2-Clause"
 depends=""
-makedepends="meson samurai libdrm-dev mesa-dev libjpeg-turbo-dev tiff-dev
+makedepends="meson samurai libdrm-dev libjpeg-turbo-dev tiff-dev
 	openssl-dev py3-jinja2 py3-ply py3-yaml python3-dev libevent-dev"
 options="!strip"
 # The same version replaces Alpine's package, so the tools and IPA helpers keep a
@@ -27,9 +29,7 @@ source="libcamera-$pkgver.tar.gz::https://gitlab.freedesktop.org/camera/libcamer
 	0002-libipa-camera_sensor_helper-add-OnePlus-9-Pro-sensor.patch
 	0003-ipa-softisp-add-contrast-detection-auto-focus.patch
 	0004-libcamera-softisp-add-a-greyscale-mono-path.patch
-	0005-libcamera-softisp-add-highlight-rolloff-and-detail-pass.patch
-	0006-libcamera-softisp-gpu-debayer-keeps-low-bits-mono-detail.patch
-	0007-libcamera-softisp-malvar-he-cutler-demosaic.patch"
+	0005-libcamera-softisp-add-highlight-rolloff-and-detail-pass.patch"
 builddir="$srcdir/libcamera-v$pkgver"
 
 prepare() {
@@ -46,7 +46,7 @@ build() {
 		--buildtype=plain \
 		-D pipelines=simple,uvcvideo \
 		-D ipas=softisp \
-		-D softisp-gpu=enabled \
+		-D softisp-gpu=disabled \
 		-D v4l2=enabled \
 		-D werror=false \
 		-D tracing=disabled \
@@ -100,6 +100,4 @@ b8f13f7fa4d3986a54a7ef9ac482d84762b5b294d96e4b958534694227b1cb5421ab32c4c70aa6c2
 84318c61d428b9e66e0ae704997c6cec4b7d67d36bbf7c38632f26cf39bc55ddbb8bb3518d5163ea2080b6ef10ec0ff2b033cc32becc9389fbca6f98a215bc12  0003-ipa-softisp-add-contrast-detection-auto-focus.patch
 9d3b10c13c1860f4f2c1d9f3c7d39a2abf518baf81cc4951c4d6964c4adea9e258d2b3e68fcc309df3ab5585a9dc97ee82a193d0f65d3608f49cac121834d632  0004-libcamera-softisp-add-a-greyscale-mono-path.patch
 c7a1d6f10bc7a29e66a3e3588cbfc61378bf0961327480550e8418a5dbb58513ef5ce837d16a30d2ab7b0224e1ed8cd9ba4fa6aa2d24a10ecc28833310184405  0005-libcamera-softisp-add-highlight-rolloff-and-detail-pass.patch
-6e2f059df2b93874407b1f9c981de98c63593bdc7b4fc9e062a624172ff7450fd70ff554610d1a4bd29f5ec6a9a54cf3c64fb78d267828554e27b37585676eab  0006-libcamera-softisp-gpu-debayer-keeps-low-bits-mono-detail.patch
-4c33ff75850c2cdef0c434eeafc95a7c828a708b9c6fdd3ded5ef24c148559e6d323b88777026ac97e72de0f82f50dff94e3ad6e7ffbb45b793223cc775cbada  0007-libcamera-softisp-malvar-he-cutler-demosaic.patch
 "

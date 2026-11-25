@@ -8,8 +8,5 @@ algorithms:
       blackLevel: 4096
   - Awb:
   - Adjust:
-      highlightKnee: 0.85
-      sharpen: 0.0
-      denoise: 0.0
   - Agc:
 ...

@@ -3,7 +3,7 @@
 This folder holds what it takes to run the **mainline Linux 7.3 kernel built from this repository
 (patches `0001–0167`)** and all of the OnePlus 9 / 9 Pro hardware services (**display at 120/60 Hz
 with HBM and Natural colour, S6SY792/S3908 touch at up to 360 Hz plus `touchboost`, audio with
-`op9-callaudio`, SLPI sensors, all four cameras with autofocus, Wi-Fi/BT addresses from
+`op9-callaudio`, SLPI sensors, the camera sensors with autofocus, Wi-Fi/BT addresses from
 `op9-addresses`, the modem stack with LTE/5G NR and VoLTE (`81voltd`) and GPS, and `tuned-ppd`
 power profiles**) on **postmarketOS `edge` (`systemd` + Phosh)**.
 
@@ -303,7 +303,7 @@ pmbootstrap install --add="hexagonrpc,libcamera,iio-sensor-proxy,phoc,modemmanag
 |---|---|---|
 | `modemmanager` | [0001-shared-qmi-register-as-LOC-master-client…](pmaports/community/modemmanager/0001-shared-qmi-register-as-LOC-master-client-before-star.patch) | Registers as the QMI `LOC` master client before starting the SM8350's GPS engine; without it every position request returns `GeneralError` |
 | `81voltd` | [0001-qvd-connection-reconnect-IMS-bearer…](pmaports/community/81voltd/0001-qvd-connection-reconnect-IMS-bearer-if-dropped-remot.patch) | Reconnects the `ims` bearer within 2 s when it drops during a 4G ↔ 5G transition (VoLTE) |
-| `libcamera` | 4 patches | IMX689/IMX766/IMX471/GC02M1B gain helpers, centred debayer for the scaled path, contrast-detect autofocus, a greyscale path for the mono camera |
+| `libcamera` | 5 patches | IMX689/IMX766/IMX471/GC02M1B gain helpers, centred debayer for the scaled path, contrast-detect autofocus, a greyscale path for the mono camera, and a tunable (off by default) highlight/detail pass |
 | `iio-sensor-proxy` | [iio-sensor-proxy-op9.patch](pmaports/community/iio-sensor-proxy/iio-sensor-proxy-op9.patch) | The SSC sensors came up late, so clients were told there were none; availability is broadcast once known |
 | `phoc` | [phoc-op9.patch](pmaports/community/phoc/phoc-op9.patch) | Rotating back left a 3 s layout timeout and a black screen |
 | `wlroots0.20` | [0001-Revert-layer-shell-error…](pmaports/community/wlroots/0001-Revert-layer-shell-error-on-0-dimension-without-anch.patch) | Phosh's home bar creates a 0-dimension surface, which aborts the client |

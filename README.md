@@ -35,12 +35,11 @@ flashlight, Android apps through Waydroid, mobile data, VoLTE calls, SMS and MMS
 and GPS.
 
 **Partial:** desktop mode (a display offers a full desktop, but docks and MST hubs do not work);
-wireless charging (about 2 W, tested only on another phone's reverse charging); cameras (all four
-work with autofocus and stock's colour matrices, and the software ISP now rebuilds the full raw
-depth, rolls highlights off and uses a sharper Malvar-He-Cutler demosaic; its optional
-denoise/unsharp pass is off by default because it is too slow for preview, and stock's Spectra HDR,
-multi-frame noise reduction and tone mapping are still not driven; the mono camera is shown in
-greyscale); NFC (cards are detected,
+wireless charging (about 2 W, tested only on another phone's reverse charging); cameras (main,
+ultrawide, telephoto and front work with autofocus and stock's colour matrices, and the software ISP
+runs on the CPU with the optional denoise/unsharp pass off by default because it is too slow for
+preview; stock's Spectra HDR, multi-frame noise reduction and tone mapping are still not driven, and
+the greyscale mono camera is disabled, matching the Arch port); NFC (cards are detected,
 there is no app and no tap-to-pay); sleep (40 to 44 mA, but not the chip's deepest state); USB-C
 analog headsets (routed, untested with an adapter); x86 games through FEX (works, slow to start).
 

@@ -102,39 +102,38 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
     phone with the rebuilt 0.8.0 package: `pipewire-spa-libcamera-1.6.11-r0` installs (no dummy),
     WirePlumber lists `imx471`/`imx766`/`gc02m1b`/`imx689` as libcamera devices and exposes
     `Front Camera`, `Main Camera` and `Ultrawide Camera` as sources, and captures still produce
-    frames. All four cameras are exposed, including the mono (`Mono Camera`).
+    frames. The greyscale mono is kept out of the app pipeline (see below).
+  - **The Main Camera is the default PipeWire source, so apps get autofocus.** The libcamera SPA
+    nodes carry `priority.session`: the front camera came up at 800 and main/ultrawide at 750, so
+    WirePlumber chose the front as the default `Video/Source`. Apps that open "the camera" then got
+    the IMX471, which has no VCM — autofocus never ran and the feed was the front sensor rather than
+    the main one (most of the "nothing like stock" impression). The WirePlumber rule now raises the
+    Main Camera to 900, so the default source is the main sensor; the VCM sweeps on stream start
+    (0→…→~300) and the soft ISP keeps it in continuous AF. Main and ultrawide expose
+    `AfMode`/`AfTrigger`; the front has no AF. Verified by reading `focus_absolute` on
+    `/dev/v4l-subdev27` while streaming the default PipeWire source.
   - **The mono is greyscale, so libcamera gets a greyscale path for it.** The GC02M1B only offers
     packed 10-bit greyscale (`R10_CSI2P`), which the software ISP rejected like any non-Bayer input;
-    without patch `0004` the node is created but advertises no format, so apps see a dead source.
-    The patch expands each pixel to R=G=B and gives the statistics pass the same layout, so
-    `cam -c 3` and the PipeWire node both produce a real image.
-  - **The software ISP now has a tunable detail pass.** Patch `0005` adds three `Adjust` knobs to
-    each tuning file: `highlightKnee` (roll highlights off above this normalised level instead of
-    clipping them to white), `denoise` (an edge-preserving 3x3 bilateral pass) and `sharpen` (an
-    unsharp mask run on the denoised result). The port sets `highlightKnee: 0.85`, but leaves
-    `denoise`/`sharpen` at **0**: the pass runs on the CPU over the whole frame, and at 12 MP it
-    costs about 3.5 s per frame (0.38 fps), which is unusable for preview. Even if it is moved to
-    the GPU it needs a cheaper implementation; enabling it is only sensible for a one-off still
-    capture. The shared `Debayer` base applies it in both the CPU and EGL paths (the EGL output is
-    CPU-filtered after `glFinish` through a DMA sync).
-  - **The EGL/GPU debayer is now built and enabled.** Patch `0006` makes the packed shader rebuild
-    the full 10/12-bit sample from the packed low-bits byte (the old code read only the most
-    significant byte), adds a monochrome `R10_CSI2P` path so the GC02M1B survives the switch, and
-    moves the detail pass to the shared base class. The APKBUILD gains `mesa-dev` and
-    `-Dsoftisp-gpu=enabled`, so libcamera builds `debayer_egl.cpp`; at runtime WirePlumber's
-    libcamera source uses it when surfaceless EGL works and logs a fallback to the CPU path
-    otherwise. The CPU debayer is still bilinear; the better demosaic is GPU-only for now.
-    **But the port ships a WirePlumber drop-in (`rootfs/etc/systemd/user/
-    wireplumber.service.d/10-op9-cpu-isp.conf`) that forces `LIBCAMERA_SOFTISP_MODE=cpu`:**
-    with EGL, WirePlumber creates the camera node but the client's stream fails with "target
-    not found" for the 2000x1128 stream the camera apps negotiate, while `cam` at 4000x3000 works.
-    The CPU path streams correctly, so it is the default until the EGL/SPA combination is fixed.
-    `cam` and still tools can still opt into GPU per process.
-  - **The GPU demosaic is Malvar-He-Cutler.** Patch `0007` replaces the bilinear interpolation in
-    the packed shader with the 5x5 gradient-corrected linear filter (Laplacian correction from the
-    sampled to the missing channel), following the IPOL reference including its border handling.
-    The shader was rendered with Mesa against an independent Python port on synthetic RGGB/BGGR/
-    GRBG/GBRG images and matched within 1/255 for all four phases.
+    patch `0004` expands each pixel to R=G=B and gives the statistics pass the same layout, so
+    `cam -c 3` produces a real image. WirePlumber still marks the mono node `disabled` (matching the
+    Arch port): it is a helper sensor with no colour output, so apps only see Main, Ultrawide,
+    Telephoto and Front.
+  - **The software ISP has a tunable highlight/detail pass, left off.** Patch `0005` adds three
+    `Adjust` knobs to each tuning file: `highlightKnee` (roll highlights off above this normalised
+    level instead of clipping them to white), `denoise` (an edge-preserving 3x3 bilateral pass) and
+    `sharpen` (an unsharp mask run on the denoised result). The port leaves all three at their
+    defaults (`highlightKnee: 1.0`, `denoise: 0`, `sharpen: 0`), so each tuning file carries an empty
+    `Adjust:` block. The pass runs on the CPU over the whole frame and at 12 MP costs about 3.5 s per
+    frame (0.38 fps), unusable for preview; enable the knobs for a one-off still capture if wanted.
+  - **The software ISP runs on the CPU only.** The EGL/GPU debayer is disabled explicitly
+    (`-D softisp-gpu=disabled`; omitting the flag leaves it at Meson's `auto`, which still builds
+    `debayer_egl` and was the actual runtime path), because with EGL WirePlumber creates the camera
+    node but the client's stream fails with "target not found" for the 2000x1128 stream apps
+    negotiate, while `cam` at 4000x3000 works. The CPU debayer streams correctly through PipeWire, so
+    it is the only path and needs no `LIBCAMERA_SOFTISP_MODE` override. Patches `0006` (GPU
+    packed-bit unpacking / mono detail) and `0007` (GPU Malvar-He-Cutler demosaic) were dropped with
+    the GPU build; the standalone `tools/op9-hdr.c` still demosaics bursts with Malvar-He-Cutler on
+    the CPU.
   - **Burst HDR/night stills: `tools/op9-hdr.c`.** The software ISP sees one frame, so it cannot do
     what stock's night mode does. This tool takes a burst of raw Bayer frames at different exposures
     (capture the CAMSS raw video node, e.g. with `v4l2-ctl --stream-mmap --stream-count=N
