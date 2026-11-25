@@ -26,7 +26,9 @@ jobs:
       # kernel/build.sh wraps the compiler in ccache when it is present. Keeping
       # the cache between runs is what makes a patch-series change cost a partial
       # rebuild instead of the whole kernel.
-      CCACHE_DIR: ${{ runner.temp }}/ccache
+      # The runner context is not available in a job-level env block, so the
+      # cache lives under the workspace.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPRESS: 'true'
     steps:
@@ -35,7 +37,7 @@ jobs:
       - name: Restore the compiler cache
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
-          path: ${{ runner.temp }}/ccache
+          path: ${{ github.workspace }}/.ccache
           key: ccache-${{ runner.os }}-${{ hashFiles('patches/kernel/**', 'kernel/op9.config') }}
           restore-keys: ccache-${{ runner.os }}-
 

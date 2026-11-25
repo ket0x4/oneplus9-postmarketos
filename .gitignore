@@ -20,3 +20,6 @@ wlan_mac.bin
 
 # Assistant session data, not project content
 /.commandcode/
+
+# ccache directory CI keeps between runs
+.ccache/
