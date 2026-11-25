@@ -54,10 +54,20 @@ fi
 echo "=== [2/5] Building the static helper tools ==="
 BIN_STAGE="$OUTDIR/bin-stage"
 mkdir -p "$BIN_STAGE"
-aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/touchboost" "$REPO/tools/touchboost.c"
-aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/alert-slider" "$REPO/tools/alert-slider.c"
-aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/op9-slot" "$REPO/tools/op9-slot.c"
-aarch64-linux-gnu-gcc -static -O2 -o "$BIN_STAGE/op9-hdr" "$REPO/tools/op9-hdr.c" -lm
+# Rebuild only when the source is newer than the binary: a rerun of this script
+# to refresh the rootfs should not recompile five programs that did not change.
+build_tool() {
+	local src=$1 out=$2
+	shift 2
+	if [ -x "$out" ] && [ "$out" -nt "$src" ]; then
+		return 0
+	fi
+	aarch64-linux-gnu-gcc -static -O2 -o "$out" "$src" "$@"
+}
+build_tool "$REPO/tools/touchboost.c" "$BIN_STAGE/touchboost"
+build_tool "$REPO/tools/alert-slider.c" "$BIN_STAGE/alert-slider"
+build_tool "$REPO/tools/op9-slot.c" "$BIN_STAGE/op9-slot"
+build_tool "$REPO/tools/op9-hdr.c" "$BIN_STAGE/op9-hdr" -lm
 # hexagonrpcd is not built here: postmarketos/pmaports/community/hexagonrpc
 # packages it, with the registry-write patches.
 

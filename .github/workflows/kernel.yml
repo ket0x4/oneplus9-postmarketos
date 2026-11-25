@@ -22,15 +22,33 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    env:
+      # kernel/build.sh wraps the compiler in ccache when it is present. Keeping
+      # the cache between runs is what makes a patch-series change cost a partial
+      # rebuild instead of the whole kernel.
+      CCACHE_DIR: ${{ runner.temp }}/ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: 'true'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
 
+      - name: Restore the compiler cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('patches/kernel/**', 'kernel/op9.config') }}
+          restore-keys: ccache-${{ runner.os }}-
+
       - name: Install the cross toolchain
+        # GCC, matching the toolchain the shipped config is verified to boot with.
+        # kernel/build.sh defaults to it; the clang/LTO path exists but its kernel
+        # does not boot on this phone, so CI does not build it.
         run: |
           sudo apt-get update -q
           sudo apt-get install -yq --no-install-recommends \
             gcc-aarch64-linux-gnu libc6-dev-arm64-cross bc bison flex libssl-dev libelf-dev cpio kmod \
-            python3 bzip2 zstd
+            python3 bzip2 zstd ccache
+          aarch64-linux-gnu-gcc --version | head -1
 
       # Before the kernel, so a failure here shows in minutes. busybox and dmcreate are static
       # aarch64 programs, so they need the cross libc as well as the compiler.
@@ -55,8 +73,14 @@ jobs:
           fi
           grep -q '^CONFIG_DEBUG_INFO_NONE=y' work/build/.config ||
             { echo '::error::built config still has debug info'; exit 1; }
+          grep -q '^CONFIG_LTO_NONE=y' work/build/.config ||
+            { echo '::error::the image was built with LTO'; exit 1; }
+          grep -q '^CONFIG_MODULE_COMPRESS_ZSTD=y' work/build/.config ||
+            { echo '::error::modules are not zstd-compressed'; exit 1; }
           echo "Base:  $(grep ^base_commit= work/build/build-manifest.txt)"
           echo "Patch series: $(grep ^patch_series_sha256= work/build/build-manifest.txt)"
+          grep -E '^(toolchain|compiler|linker|lto)=' work/build/build-manifest.txt
+          ccache -s | head -8 || true
           grep -E 'warning:' build.log | sort -u || true
           ls -l work/build/arch/arm64/boot/Image work/build/op9-builtin.dtb work/build/op9-builtin-lemonade.dtb
           # A debug kernel Image is hundreds of MB; the stripped one is tens.
