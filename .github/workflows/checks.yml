@@ -13,6 +13,8 @@
 #   python3 .github/checks/docs-links.py
 #   python3 .github/checks/apkbuild-sums.py
 #   python3 .github/checks/apply-patches.py
+#   python3 .github/checks/desktop-entries.py
+#   python3 tests/test_desktop_mode.py
 #   .github/checks/reproducible-initramfs.sh
 name: Tree checks
 
@@ -57,7 +59,6 @@ env:
     rootfs/usr/local/bin/ssc-wait
     rootfs/usr/local/bin/steam-fex
     rootfs/usr/local/bin/usb-gadget-ensure
-    rootfs/usr/local/bin/waydroid-stop
     rootfs/etc/tuned/profiles/op9-balanced/script.sh
     rootfs/etc/tuned/profiles/op9-powersave/script.sh
     rootfs/etc/tuned/profiles/op9-performance/script.sh
@@ -117,6 +118,34 @@ jobs:
           done <<< "$SCRIPTS"
           shellcheck -S warning -x "${shell[@]}"
 
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+
+      - name: Install python3-gi and the GNOME settings schemas
+        # The desktop-mode scripts import gi at module level, and the settings
+        # round-trip test needs the real schemas; without them it would only skip.
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends \
+            python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 \
+            gsettings-desktop-schemas gnome-settings-daemon-common
+
+      - name: The schemas the settings test needs are present
+        # A missing schema turns two tests into skips, which would let a broken
+        # round-trip pass CI unnoticed. Fail here instead.
+        run: |
+          for s in org.gnome.desktop.lockdown org.gnome.settings-daemon.plugins.power; do
+            if ! ls /usr/share/glib-2.0/schemas/ | grep -qx "$s.gschema.xml"; then
+              echo "::error::schema $s is not installed; the settings test would only skip"
+              exit 1
+            fi
+          done
+
+      - name: Desktop mode logic
+        run: python3 tests/test_desktop_mode.py
+
   udev:
     runs-on: ubuntu-24.04
     steps:
@@ -150,6 +179,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+      - name: Desktop launchers and the image builder's unit list
+        # The units job below proves every unit's Exec points at something that
+        # exists. This does the same for .desktop Exec lines and for the units
+        # populate-mounted-rootfs.sh enables, both of which have named a missing
+        # file before without any check noticing.
+        run: python3 .github/checks/desktop-entries.py
       - name: ExecStart binaries exist in rootfs/
         run: |
           # /usr/local/bin is either this repo's own scripts or a tool compiled
