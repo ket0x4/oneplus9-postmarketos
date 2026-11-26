@@ -25,11 +25,22 @@ BIN = os.path.join(ROOT, "rootfs", "usr", "local", "bin")
 
 
 def load(name, filename):
-    """Import a script by path, the way Python would import a module."""
+    """Import a script by path, the way Python would import a module.
+
+    op9-desktop imports Gtk 4, Adw and GUdev at module level even though nothing
+    this file tests needs them. If a typelib is missing, say which package to
+    install instead of dying in gi.require_version with a bare ValueError.
+    """
     spec = importlib.util.spec_from_loader(name, SourceFileLoader(name, filename))
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ValueError as e:                      # gi.require_version
+        raise unittest.SkipTest(
+            f"{os.path.basename(filename)} needs a GI namespace that is not installed "
+            f"({e}); on Debian/Ubuntu install python3-gi, gir1.2-gtk-4.0, "
+            f"gir1.2-adw-1 and gir1.2-gudev-1.0") from e
     return module
 
 
