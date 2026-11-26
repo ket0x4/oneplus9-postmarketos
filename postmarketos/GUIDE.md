@@ -9,7 +9,7 @@ power profiles**) on **postmarketOS `edge` (`systemd` + Phosh)**.
 
 > **Status:** this guide is a record of bring-up, and postmarketOS is the only supported route.
 > The steps have never been replayed from scratch; expect to troubleshoot.
-> The KDE Plasma 6 / RDP sections (9 and 10) were tried on the phone but the files they describe
+> The KDE Plasma 6 desktop-mode files section 9 describes were tried on the phone but
 > **are not in this repository** — they are kept here as notes only.
 
 ---
@@ -130,17 +130,21 @@ both phones, not a board name. The shared `sm8350-oneplus-common.dtsi` asks for 
 2. Build the image with the extra packages this port needs:
    ```sh
    pmbootstrap install --no-fde \
-       --add="rmtfs,tqftpserv,qrtr,qmi-utils,81voltd,mmsd-tng,tuned,tuned-ppd,alsa-ucm-conf,alsa-utils,libcamera,libcamera-tools,pipewire-tools,wireplumber,mobile-config-firefox,firefox,calls,chatty,gnome-contacts,loupe,iotas,fastfetch,bluez,iwd,networkmanager-wifi,networkmanager-wwan,python3,py3-gobject3,py3-dbus,py3-cairo,libqmi,libqrtr-glib,gnome-shell,gnome-shell-session,mutter,gdm"
+       --add="rmtfs,tqftpserv,qrtr,qmi-utils,81voltd,mmsd-tng,tuned,tuned-ppd,alsa-ucm-conf,alsa-utils,libcamera,libcamera-tools,pipewire-tools,wireplumber,mobile-config-firefox,firefox,calls,chatty,gnome-contacts,loupe,iotas,fastfetch,bluez,iwd,networkmanager-wifi,networkmanager-wwan,python3,py3-gobject3,py3-dbus,py3-cairo,libqmi,libqrtr-glib,gnome-shell,gnome-shell-session,mutter,gdm,gvfs,gvfs-mtp"
    ```
-   The last four names are what desktop mode runs (`op9-desktop.service` → `gnome-session` →
-   `gnome-shell`). `postmarketos-ui-phosh` ships Phosh only and explicitly excludes the `-mobile`
-   GNOME variants, so nothing else pulls them, and `gdctl` (used for the display layout) comes from
-   `mutter`. Without `gnome-shell` the chooser still appears, but starting desktop mode leaves no
-   shell. `gdm` is needed too: `gnome-shell` imports its `Gdm` typelib and `org.gnome.login-screen`
-   schema. Installing it pulls `gdm-systemd`, but greetd already owns
-   `display-manager.service`, so apk refuses to preset GDM over it and Phosh keeps the seat.
+   The `gnome-shell`/`gnome-shell-session`/`mutter`/`gdm` names are what desktop mode runs
+   (`op9-desktop.service` → `gnome-session` → `gnome-shell`). `postmarketos-ui-phosh` ships Phosh
+   only and explicitly excludes the `-mobile` GNOME variants, so nothing else pulls them, and
+   `gdctl` (used for the display layout) comes from `mutter`. Without `gnome-shell` the chooser
+   still appears, but starting desktop mode leaves no shell. `gdm` is needed too: `gnome-shell`
+   imports its `Gdm` typelib and `org.gnome.login-screen` schema. Installing it pulls
+   `gdm-systemd`, but greetd already owns `display-manager.service`, so apk refuses to preset GDM
+   over it and Phosh keeps the seat.
    `py3-cairo` draws the keyboard and trackpad on the phone screen; without it `op9-desktop-input`
-   leases the panel and leaves it dark.
+   leases the panel and leaves it dark. `gvfs` is what Nautilus needs for the trash and mounting
+   removable media (its udisks2 support is built in, there is no separate subpackage), and
+   `gvfs-mtp` adds browsing a phone over USB: without gvfs, `gio list trash://` fails with
+   "Operation not supported" and the file manager has no trash.
 
 3. Copy the resulting rootfs image
    (`~/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/oneplus-lemonade.img`) into the working
@@ -353,8 +357,8 @@ Points confirmed on a OnePlus 9 (`LE2115`) running postmarketOS `edge` with `sys
 
 ## 9. USB-C HDMI docks and full KDE Plasma 6 desktop mode
 
-> The KDE/Plasma files in this section (service units, the `op9-rdp-desktop*` scripts, the nftables
-> rules) are **not in this repository**; they were local setups tried on the phone.
+> The KDE/Plasma files in this section (the service units and the `op9-desktop*` scripts) are
+> **not in this repository**; they were local setups tried on the phone.
 
 1. **Kernel patches (`0166` and `0167`):**
    - `patches/kernel/0166-usb-typec-ucsi-preserve-altmode-mux-when-partner-fla.patch`: while
@@ -374,34 +378,3 @@ Points confirmed on a OnePlus 9 (`LE2115`) running postmarketOS `edge` with `sys
      trackpad** (in `auto` mode it turns the screen off if an external USB or wireless keyboard and
      mouse are attached). Unplugging the dock brings `plasma-mobile.service` back on `tty1` within 3 s.
    - `systemsettings` (and `flatpak-kcm`) should be installed for the desktop settings.
-
-## 10. A virtual (headless) full KDE Plasma 6 desktop over RDP
-
-> These components are **not in this repository** either; they are local setup notes.
-
-While Plasma Mobile keeps running untouched on the phone's screen, an isolated `kwin_wayland
---virtual` (`1920x1080`, `Scale: 1`) + `plasmashell` (`org.kde.plasma.desktop`) + `krdpserver
---plasma` session can run in the background on TCP `3389`:
-
-- **Required packages:** `krdp`, `krdp-systemd`, `openssl`, `systemsettings`
-- **Service and commands:**
-  - `/usr/local/bin/op9-rdp-desktop-run` starts an isolated Plasma desktop plus `krdpserver` with its
-    own `dbus-run-session` under `/run/user/1000/op9-rdp-desktop` (it shares the PipeWire/PulseAudio
-    sockets and generates a self-signed TLS certificate at `~/.config/op9-rdp-desktop/krdp.{crt,key}`
-    on first run).
-  - `~/.config/systemd/user/op9-rdp-desktop.service` is off by default (started on demand, and it uses
-    no RAM or battery while stopped).
-  - `/usr/local/bin/op9-rdp-desktop {start|stop|restart|status}`
-- **Plasma Mobile quick setting:**
-  - `/usr/share/plasma/quicksettings/org.op9.quicksetting.rdpdesktop/` (`RDP Desktop` — `On (:3389)` /
-    `Off`), added to the front of `enabledQuickSettings` in `~/.config/plasmamobilerc`. The source is
-    in this repository: [op9-quick-settings](pmaports/community/op9-quick-settings).
-- **Firewall (`/etc/nftables.d/60-op9-rdp.nft`):** TCP `3389` is accepted only on `wlan*`, `eth*`,
-  `en*` (and `usb*`) interfaces; it is closed on cellular (`wwan*`).
-- **Connecting from a PC (the RDP graphics pipeline, `/gfx`, is required):**
-
-  ```sh
-  xfreerdp3 /v:<phone-ip> /u:<user> /p:<password> /cert:ignore /gfx /dynamic-resolution
-  ```
-
-  (In Remmina, pick colour depth **`GFX RFX (32 bpp)`** or **`GFX AVC420`**.)

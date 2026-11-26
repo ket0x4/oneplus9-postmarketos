@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Back to phone mode
+Comment=Close the desktop and hand the phone screen back to Phosh
+Exec=/usr/local/bin/op9-desktop --leave
+Icon=go-previous-symbolic
+Categories=System;
+StartupNotify=false
+# Desktop mode only. Phosh sets XDG_CURRENT_DESKTOP=Phosh:GNOME, so OnlyShowIn=GNOME would
+# match there too; NotShowIn names Phosh directly. The flag is ignored outside desktop mode.
+NotShowIn=Phosh;

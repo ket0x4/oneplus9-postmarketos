@@ -4,7 +4,6 @@
 #
 #   touch rate      120 Hz or 360 Hz (stock only uses 360 in game mode)
 #   Natural colour  sRGB instead of the panel's wide Display P3 gamut
-#   RDP desktop     start a headless KDE Plasma desktop over RDP (port 3389)
 #
 # The Phosh plugins are shared modules built against the installed Phosh's source
 # (they use its classes), so they need a rebuild when Phosh moves. The Plasma
@@ -14,7 +13,7 @@
 # and re-applied at login by op9-tuning-restore.service.
 pkgname=op9-quick-settings
 pkgver=1
-pkgrel=0
+pkgrel=1
 pkgdesc="OnePlus 9 quick settings for Phosh and Plasma Mobile"
 url="https://github.com/ket0x4/oneplus9-postmarketos"
 arch="aarch64"
@@ -36,8 +35,6 @@ source="meson.build
 	touchrate.metadata.json
 	naturalcolour.qml
 	naturalcolour.metadata.json
-	rdpdesktop.qml
-	rdpdesktop.metadata.json
 	phosh-$_phoshver.tar.xz::https://sources.phosh.mobi/releases/phosh/phosh-$_phoshver.tar.xz"
 
 build() {
@@ -66,7 +63,7 @@ package() {
 
 	# The Plasma Mobile quick settings. Each is a KPackage: a metadata.json and
 	# contents/ui/main.qml, installed under share/plasma/quicksettings/<id>/.
-	for id in touchrate naturalcolour rdpdesktop; do
+	for id in touchrate naturalcolour; do
 		install -Dm644 "$srcdir/$id.metadata.json" \
 			"$pkgdir/usr/share/plasma/quicksettings/org.op9.quicksetting.$id/metadata.json"
 		install -Dm644 "$srcdir/$id.qml" \
@@ -89,7 +86,5 @@ e4a6dcab4410df084f6ac95d834ad741adb35403d6889ee67e9610956fb2eb8fe37769e035d4cbc0
 0cf6324ab6cca7f4770ee8725c9152a18e60af11850066abeb01ca6bc31d24db515675f87fb8bed6ee83b3c2df03b598a8c3cc5e46753c2dbfdef9fd2efc0470  touchrate.metadata.json
 7433cad401ef37924632c2abd8a9a72b223fbeed1ed1b45eafb0c4a5ebd44f0b291d563c6cabc8db330d173d186229ae9e2f22b3b5c8f8391de85109c57ef362  naturalcolour.qml
 a1305ec49135286d5ad5165ff38c2be038814d20123564670723480cba9c43e168a578fd4cfec2171c15593df1d38f3a60aac92646f9b00b9e6c225c87646bcf  naturalcolour.metadata.json
-f0615dfc340c5713a3e060201e8e2d216aea8adc78d7dcfbfe866515bfa46ce0630c92f98381a0143573bbd59aeb99c4d1f09cb68a4776682bf16c255445806d  rdpdesktop.qml
-fd82fd7097b1556f8c59574f911bdd2f924a81053ce78e6a0cf1a9ad9c8b4d39a59c24165e27c0dd110ee660b72b33f210744f8f61a976eedf5a96af64639ad9  rdpdesktop.metadata.json
 dbbe0149092f350c7eda01c12a4729c7b36e38ae782ed79adcf30825f8a0bf06efc3b7d40ba1d50e039427fc6ef97dd6663538882cb8e3d1ae426a0e3a9aadac  phosh-$_phoshver.tar.xz
 "

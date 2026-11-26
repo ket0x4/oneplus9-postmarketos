@@ -40,9 +40,11 @@ def load_config():
             c = json.load(f)
     except (OSError, ValueError):
         c = {}
-    mode = c.get("mode", "off")
+    # Keyboard and trackpad is the useful default for a phone driving a TV; a stored value
+    # that no longer exists (an older build's mode) falls back to it too.
+    mode = c.get("mode", "keyboard-trackpad")
     if not any(m[0] == mode and m[3] for m in MODES):
-        mode = "off"
+        mode = "keyboard-trackpad"
     return {"mode": mode, "ask": c.get("ask", True)}
 
 
@@ -58,21 +60,76 @@ def save_config(c):
 #   screen-keyboard-enabled: Phosh's on-screen keyboard needs it; in GNOME it pops a keyboard
 #     up on the TV for every text field.
 #   button-layout: phone apps fill the screen and need no buttons; desktop windows do.
-# Phosh's docked manager rewrites the phone side of both on every start (docked-manager.c
-# calls set_enabled(FALSE) whenever the device isn't docked), so desktop mode only puts its
-# own values in place; nothing has to be saved back for Phosh.
+#   disable-lock-screen: gnome-shell's lock screen authenticates through GDM
+#     (new Gdm.Client() + Gdm.UserVerifier), and this image runs greetd, not GDM, so
+#     org.gnome.DisplayManager isn't on the bus at all: a locked GNOME session cannot be
+#     unlocked. The desktop is on a TV behind the user's own keyboard, so don't lock it.
+#   sleep-inactive-battery-type: a USB-C dock that carries no power reads as battery, and the
+#     stock 5-minute idle suspend would kill the desktop session while it's in use.
+#   sleep-inactive-ac-type: the same for a dock that does pass power through.
+# Phosh's docked manager rewrites the phone side of the first two on every start
+# (docked-manager.c calls set_enabled(FALSE) whenever the device isn't docked), so desktop
+# mode only puts its own values in place. The other three are not rewritten by anyone, so
+# they are saved before the switch and put back when desktop mode ends.
 DESKTOP_SETTINGS = [
     ("org.gnome.desktop.a11y.applications", "screen-keyboard-enabled", GLib.Variant("b", False)),
     ("org.gnome.desktop.wm.preferences", "button-layout",
      GLib.Variant("s", "appmenu:minimize,maximize,close")),
 ]
+SAVED_SETTINGS = [
+    ("org.gnome.desktop.lockdown", "disable-lock-screen", GLib.Variant("b", True)),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-battery-type",
+     GLib.Variant("s", "nothing")),
+    ("org.gnome.settings-daemon.plugins.power", "sleep-inactive-ac-type",
+     GLib.Variant("s", "nothing")),
+]
+SAVED_STATE = os.path.join(GLib.get_user_config_dir(), "op9-desktop", "restore-settings.json")
 
 
 def apply_desktop_settings():
-    """Put GNOME's values in place; Phosh restores its own when it starts."""
+    """Put GNOME's values in place, saving the ones nobody else rewrites so they can be put
+    back when desktop mode ends."""
+    saved = {}
+    try:
+        with open(SAVED_STATE) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        pass
+    for schema, key, value in SAVED_SETTINGS:
+        s = Gio.Settings.new(schema)
+        entry = f"{schema} {key}"
+        if entry not in saved:            # first switch: keep the user's own value
+            saved[entry] = s.get_value(key).print_(False)
+        s.set_value(key, value)
     for schema, key, value in DESKTOP_SETTINGS:
         Gio.Settings.new(schema).set_value(key, value)
     Gio.Settings.sync()
+    os.makedirs(os.path.dirname(SAVED_STATE), exist_ok=True)
+    with open(SAVED_STATE + ".tmp", "w") as f:
+        json.dump(saved, f)
+    os.replace(SAVED_STATE + ".tmp", SAVED_STATE)
+
+
+def restore_settings():
+    """Put back what apply_desktop_settings() changed. Runs as the desktop user, before
+    Phosh starts on the same settings."""
+    try:
+        with open(SAVED_STATE) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        return
+    for entry, printed in saved.items():
+        schema, key = entry.split(" ", 1)
+        s = Gio.Settings.new(schema)
+        try:
+            s.set_value(key, GLib.Variant.parse(s.get_value(key).get_type(), printed, None, None))
+        except (GLib.Error, TypeError) as e:
+            log("couldn't restore", entry, e)
+    Gio.Settings.sync()
+    try:
+        os.unlink(SAVED_STATE)
+    except OSError:
+        pass
 
 
 def external_connected():
@@ -90,14 +147,9 @@ def external_connected():
     return sorted(out)
 
 
-def edid_identity(connector):
+def parse_edid(e):
     """(vendor, product, serial, (width, height, refresh)) the way mutter names a monitor,
-    from the connector's EDID, or None."""
-    paths = glob.glob(f"/sys/class/drm/card*-{connector}/edid")
-    try:
-        e = open(paths[0], "rb").read() if paths else b""
-    except OSError:
-        e = b""
+    from the EDID bytes, or None if they are not a usable EDID block."""
     if len(e) < 128 or e[:8] != bytes.fromhex("00ffffffffffff00"):
         return None
     v = (e[8] << 8) | e[9]
@@ -123,6 +175,16 @@ def edid_identity(connector):
         n = int.from_bytes(e[12:16], "little")
         serial = "0x%08x" % n if n else "unknown"
     return vendor, product, serial, mode
+
+
+def edid_identity(connector):
+    """The monitor identity above, read from the connector's EDID in sysfs."""
+    paths = glob.glob(f"/sys/class/drm/card*-{connector}/edid")
+    try:
+        e = open(paths[0], "rb").read() if paths else b""
+    except OSError:
+        e = b""
+    return parse_edid(e)
 
 
 def spec_xml(parent, ident):
@@ -197,7 +259,9 @@ def start_unit(unit):
 
 def back_to_phone():
     """Stop desktop mode; its ExecStopPost gives the seat back to Phosh once GNOME let go
-    of tty7. Starting Phosh from here races with the GNOME session still shutting down."""
+    of tty7. Starting Phosh from here races with the GNOME session still shutting down.
+    The settings are put back first: this is the last moment the session bus is alive."""
+    restore_settings()
     log("back to phone mode")
     subprocess.run(["systemctl", "stop", "--no-block", "op9-desktop.service"])
 
@@ -281,6 +345,10 @@ class PhoneSide:
     def __init__(self, app):
         self.app = app
         self.chooser = None
+        # If the GNOME session died without running back_to_phone() (a crash, a panic, the
+        # power being pulled), the saved values are still sitting there and idle suspend
+        # would stay off on the phone. Phosh is the one running now, so put them back.
+        restore_settings()
         self.watch = DisplayWatch(self.changed)
         if self.watch.state or "--chooser" in sys.argv:
             GLib.timeout_add_seconds(3, lambda: self.changed(self.watch.state or ["test"]) and False)
@@ -437,4 +505,8 @@ class App(Adw.Application):
 
 if __name__ == "__main__":
     # --chooser: show the chooser now, as if a display was connected (for testing)
+    # --leave: hand the screens back to Phosh without unplugging the display
+    if "--leave" in sys.argv[1:]:
+        back_to_phone()
+        sys.exit(0)
     sys.exit(App().run([sys.argv[0]]))

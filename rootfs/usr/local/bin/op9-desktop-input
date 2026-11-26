@@ -12,6 +12,7 @@
 #   trackpad           the whole screen is a trackpad (a keyboard is connected)
 #   off                touches are ignored
 #   auto               one of the above from the USB and Bluetooth keyboards and mice attached
+import errno
 import fcntl
 import glob
 import json
@@ -431,7 +432,11 @@ class Panel:
         try:
             self.off()
         except OSError as e:
-            log("couldn't turn the phone screen off:", e)
+            # GNOME ending the lease takes the object with it, and the commit then fails with
+            # ENOENT ("No such file or directory"). Nothing is left to switch off in that case,
+            # which is the usual path when the desktop goes away first.
+            if e.errno != errno.ENOENT:
+                log("couldn't turn the phone screen off:", e)
         for b in self.bufs:
             b["mm"].close()
         os.close(self.fd)

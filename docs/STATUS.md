@@ -159,14 +159,9 @@ Verified live on an LE2115 (kernel `7.3.0-op9+ #13`, patches 0001–0167):
     Realtek `r8152` Ethernet, microSD reader, 2.4 GHz wireless KB+mouse dongle): `DP-1` trains
     cleanly at HBR2 (`540000 kHz`, 2 lanes) and drives **`1920x1080@60`** full **KDE Plasma 6
     Desktop** (`op9-desktop.service` + `op9-desktop-input` touchpad/keyboard on `DSI-1`).
-  - Also supports an on-demand **headless virtual Full KDE Plasma 6 Desktop over RDP**
-    (`op9-rdp-desktop.service`, `kwin_wayland --virtual` + `krdpserver --plasma` on TCP `3389`,
-    isolated from Plasma Mobile) with a Plasma Mobile Quick Settings toggle
-    (`org.op9.quicksetting.rdpdesktop`, source in [op9-quick-settings](../postmarketos/pmaports/community/op9-quick-settings)).
-  - **Plasma 6 and the RDP session are not in this repository.** `rootfs/` ships the GNOME/Phosh
-    desktop-mode helpers only; the Plasma units and `op9-rdp-desktop*` scripts were a local setup on
-    the test phone and are recorded here as what the kernel patches make possible, not as shipped
-    components.
+  - **Plasma 6 is not in this repository.** `rootfs/` ships the GNOME/Phosh desktop-mode helpers
+    only; the Plasma units and `op9-desktop*` scripts were a local setup on the test phone and are
+    recorded here as what the kernel patches make possible, not as shipped components.
 
 ### Bring-up fixes added on the 9
 
@@ -331,6 +326,20 @@ and a faint ripple every 3 mm a finger travels on the trackpad.
   rewrites both on every start (`docked-manager.c` calls `set_enabled(FALSE)` while the device
   isn't docked), so the phone side always comes back by itself. Otherwise GNOME pops up a keyboard
   on the TV for every text field, or Phosh's keyboard stays hidden.
+- The lock screen is switched off in desktop mode (`org.gnome.desktop.lockdown disable-lock-screen`).
+  gnome-shell authenticates its lock screen through GDM (`new Gdm.Client()` and a
+  `Gdm.UserVerifier`), and this image runs greetd, so `org.gnome.DisplayManager` is not on the bus
+  and a locked session could not be unlocked. Phosh does not read that key, and the value is saved
+  before the switch and restored when desktop mode ends, so the phone's own lock is unaffected.
+- Idle suspend is switched off in desktop mode too (`sleep-inactive-{ac,battery}-type` = `nothing`).
+  A USB-C dock that carries no power reads as battery, so stock's 5-minute battery suspend would
+  end the session while the desktop was in use. Also saved and restored.
+- Back to phone mode is in the app grid ("Back to phone mode", `op9-desktop --leave`) as well as
+  being automatic on unplug, since otherwise a docked desktop had no way out without pulling the
+  cable. `op9-desktop.service` sets `TimeoutStopSec=90s`: `op9-desktop-restore` waits up to 30 s for
+  gnome-shell to release tty7 and the user manager's jobs to drain, and the documented
+  `DefaultTimeoutStopSec=5s` (see §8 of the guide) otherwise kills it, after which nothing starts
+  Phosh and both screens stay black until a reboot.
 - Phosh's own docked mode is not an alternative to this: it needs a pointing device as well as an
   external display (`PHOSH_MODE_DOCKED_PHONE_MASK`), keeps phoc and the Phosh shell, and only
   flips the same four settings plus `sm.puri.phoc auto-maximize`. With the phone as the
@@ -347,6 +356,9 @@ and a faint ripple every 3 mm a finger travels on the trackpad.
   `display-manager.service`; the existing greetd symlink makes apk refuse that, so Phosh stays.
 - `py3-cairo` is what `op9-desktop-input` draws the keyboard and trackpad with. Without it the
   daemon still leases the panel and the phone screen stays dark.
+- `gvfs` is what a desktop file manager needs: without it `gio list trash://` fails with
+  "Operation not supported", so Nautilus has no trash and cannot mount removable media (its udisks2
+  support is built into the main package). `gvfs-mtp` adds browsing a phone over USB.
 - On images that run Phosh under greetd/phrog rather than a `phosh.service`, `op9-desktop.service`
   has to stop greetd itself (`Conflicts=greetd.service`) and `op9-desktop-session` must ignore
   `SIGHUP`: the greetd session worker hangs tty7 up when the old session ends, which would kill

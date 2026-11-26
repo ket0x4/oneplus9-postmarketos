@@ -20,6 +20,11 @@ ExecStart=/usr/local/bin/op9-desktop-session
 # helper waits for gnome-shell to release tty7; starting the display manager too early
 # leaves its session worker unable to take the VT and both screens stay black.
 ExecStopPost=+/usr/local/bin/op9-desktop-restore
+# That helper waits up to 30 s for the two things above to settle, so the manager's
+# DefaultTimeoutStopSec (5 s on the fast-shutdown images this port documents) would kill it
+# mid-wait: op9-desktop.service then fails with result 'timeout' and nothing starts Phosh,
+# leaving both screens black until a reboot.
+TimeoutStopSec=90s
 User=1000
 WorkingDirectory=~
 PAMName=login
