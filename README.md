@@ -52,14 +52,14 @@ on mainline but hit a boot-time secure-storage wall. See the [write-up](docs/FIN
 
 | Folder | Contents |
 |---|---|
-| [`patches/`](patches) | Everything that modifies upstream source: `kernel/` is the 167-patch Linux 7.3 series, the rest are the pmaports patches |
+| [`patches/`](patches) | Everything that modifies upstream source: `kernel/` is the 167-patch Linux 7.3 series, the rest are the patches for packaged programs, which each pmaports APKBUILD symlinks to |
 | [`kernel/`](kernel) | The kernel config and a reproducible build script |
 | [`initramfs/`](initramfs) | Early boot: USB network and rescue shell, then the root filesystem |
 | [`rootfs/`](rootfs) | udev, systemd, ALSA, WirePlumber and TuneD overlay |
 | [`postmarketos/`](postmarketos) | pmaports packages, the image builder and the [install guide](postmarketos/GUIDE.md) |
 | [`scripts/`](scripts) | Packing a boot image and USB internet sharing |
 | [`tools/`](tools) | Programs for the phone, `bringup/` probes and `generators/` |
-| [`docs/`](docs) | [Status](docs/STATUS.md), [hardware notes](docs/HARDWARE.md) and the [fingerprint write-up](docs/FINGERPRINT.md) |
+| [`docs/`](docs) | [Status](docs/STATUS.md), [hardware notes](docs/HARDWARE.md), [which patches are WIP/HACK](docs/PATCHES.md) and the [fingerprint write-up](docs/FINGERPRINT.md) |
 
 **Not included:** firmware, the stock device tree blob the bootloader insists on (taken from your
 `vendor_boot.img`), and sensor calibration. All three come from your own phone.
@@ -98,7 +98,8 @@ Reports from other models are the most useful thing anyone can send. Open an iss
 number, firmware version and what happened.
 
 Many patches are marked `WIP` or `HACK`: they work here but are not ready for upstream. Review them
-before relying on them.
+before relying on them, and see [docs/PATCHES.md](docs/PATCHES.md) for which ones they are and why
+each is marked.
 
 ## Credits
 
